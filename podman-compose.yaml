@@ -1,0 +1,95 @@
+# Kraken Security Framework — Podman Compose Orchestration
+# All services run rootless — no daemon required
+
+version: '3.8'
+
+services:
+  kraken-orchestrator:
+    image: clawmolt/kraken-base:latest
+    container_name: kraken-orchestrator
+    security_opt:
+      - no-new-privileges:true
+      - label=disable  # For local dev; use SELinux labels in production
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=100M,mode=1777
+    volumes:
+      # Rootless podman socket for spawning sandbox containers
+      - /run/user/1000/podman/podman.sock:/run/podman/podman.sock:ro
+      - ./config:/app/config:ro
+    environment:
+      - KRAKEN_MODE=PRODUCTION
+      - KRAKEN_LOG_LEVEL=INFO
+      - KRAKEN_MAX_AGENTS=50
+      - KRAKEN_SANDBOX_IMAGE=clawmolt/kraken-base:latest
+    networks:
+      - kraken-internal
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    ports:
+      - "8080:8080"
+
+  escrow-engine:
+    image: clawmolt/escrow-vault:latest
+    container_name: kraken-escrow
+    depends_on:
+      kraken-orchestrator:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+      - label=disable
+    cap_drop:
+      - ALL
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=50M,mode=1777
+      - /data:size=200M,mode=0700
+    volumes:
+      - ./escrow-data:/app/data:ro
+    environment:
+      - KRAKEN_ESCROW_MODE=PRODUCTION
+      - KRAKEN_SETTLEMENT_TIMEOUT=3600
+      - KRAKEN_CONSENSUS_AGENTS=3
+    networks:
+      - kraken-internal
+    restart: unless-stopped
+    # No external ports — only reachable via kraken-internal network
+
+  audit-logger:
+    image: clawmolt/kraken-base:latest
+    container_name: kraken-audit
+    depends_on:
+      - kraken-orchestrator
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=50M,mode=1777
+    volumes:
+      - ./logs:/app/logs:rw
+    environment:
+      - KRAKEN_AUDIT_MODE=APPEND
+      - KRAKEN_LOG_RETENTION_DAYS=90
+    networks:
+      - kraken-internal
+    restart: unless-stopped
+    # No external ports — log aggregation only
+
+networks:
+  kraken-internal:
+    driver: bridge
+    internal: true  # No external internet access — default deny

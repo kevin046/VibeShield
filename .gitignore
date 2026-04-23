@@ -1,0 +1,36 @@
+# Dependencies
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Environment
+.env
+.env.local
+
+# Podman
+*.tar
+*.img
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data
+data/
+escrow-data/
