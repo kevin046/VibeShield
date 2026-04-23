@@ -12,6 +12,10 @@
   <img src="https://img.shields.io/badge/License-Apache_2.0-green" />
 </p>
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=kevin046/VibeShield&type=Date)](https://star-history.com/#kevin046/VibeShield&Date)
+
 ---
 
 ## Overview
@@ -188,10 +192,6 @@ Kraken is designed around **defense in depth**:
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=kevin046/VibeShield&type=Date)](https://star-history.com/#kevin046/VibeShield&Date)
 
 ## License
 
