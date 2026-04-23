@@ -199,4 +199,4 @@ Apache-2.0 — see [LICENSE](LICENSE).
 
 ---
 
-**ClawMolt AI** | Vibedrift Inc. | Markham, Ontario, Canada
+**ClawMolt AI** | Vibedrift Inc.
