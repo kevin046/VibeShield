@@ -1,6 +1,6 @@
-"""Core package for the Kraken Security Framework."""
+"""Core package for the VibeShield Security Framework."""
 
-from core.config import KrakenConfig
+from core.config import VibeShieldConfig
 
 __version__ = "2.0.0"
 __all__ = ["config"]

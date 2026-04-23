@@ -1,3 +1,3 @@
-"""API package for the Kraken Security Framework."""
+"""API package for the VibeShield Security Framework."""
 
 __all__ = ["commands"]

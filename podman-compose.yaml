@@ -1,12 +1,12 @@
-# Kraken Security Framework — Podman Compose Orchestration
+# VibeShield Security Framework — Podman Compose Orchestration
 # All services run rootless — no daemon required
 
 version: '3.8'
 
 services:
-  kraken-orchestrator:
-    image: clawmolt/kraken-base:latest
-    container_name: kraken-orchestrator
+  vibeshield-orchestrator:
+    image: vibeshield/base:latest
+    container_name: vibeshield-orchestrator
     security_opt:
       - no-new-privileges:true
       - label=disable  # For local dev; use SELinux labels in production
@@ -23,12 +23,12 @@ services:
       - /run/user/1000/podman/podman.sock:/run/podman/podman.sock:ro
       - ./config:/app/config:ro
     environment:
-      - KRAKEN_MODE=PRODUCTION
-      - KRAKEN_LOG_LEVEL=INFO
-      - KRAKEN_MAX_AGENTS=50
-      - KRAKEN_SANDBOX_IMAGE=clawmolt/kraken-base:latest
+      - VIBESHIELD_MODE=PRODUCTION
+      - VIBESHIELD_LOG_LEVEL=INFO
+      - VIBESHIELD_MAX_AGENTS=50
+      - VIBESHIELD_SANDBOX_IMAGE=vibeshield/base:latest
     networks:
-      - kraken-internal
+      - vibeshield-internal
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"]
@@ -40,10 +40,10 @@ services:
       - "8080:8080"
 
   escrow-engine:
-    image: clawmolt/escrow-vault:latest
-    container_name: kraken-escrow
+    image: vibeshield/escrow:latest
+    container_name: vibeshield-escrow
     depends_on:
-      kraken-orchestrator:
+      vibeshield-orchestrator:
         condition: service_healthy
     security_opt:
       - no-new-privileges:true
@@ -58,19 +58,19 @@ services:
     volumes:
       - ./escrow-data:/app/data:ro
     environment:
-      - KRAKEN_ESCROW_MODE=PRODUCTION
-      - KRAKEN_SETTLEMENT_TIMEOUT=3600
-      - KRAKEN_CONSENSUS_AGENTS=3
+      - VIBESHIELD_ESCROW_MODE=PRODUCTION
+      - VIBESHIELD_SETTLEMENT_TIMEOUT=3600
+      - VIBESHIELD_CONSENSUS_AGENTS=3
     networks:
-      - kraken-internal
+      - vibeshield-internal
     restart: unless-stopped
-    # No external ports — only reachable via kraken-internal network
+    # No external ports — only reachable via vibeshield-internal network
 
   audit-logger:
-    image: clawmolt/kraken-base:latest
-    container_name: kraken-audit
+    image: vibeshield/base:latest
+    container_name: vibeshield-audit
     depends_on:
-      - kraken-orchestrator
+      - vibeshield-orchestrator
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -82,14 +82,14 @@ services:
     volumes:
       - ./logs:/app/logs:rw
     environment:
-      - KRAKEN_AUDIT_MODE=APPEND
-      - KRAKEN_LOG_RETENTION_DAYS=90
+      - VIBESHIELD_AUDIT_MODE=APPEND
+      - VIBESHIELD_LOG_RETENTION_DAYS=90
     networks:
-      - kraken-internal
+      - vibeshield-internal
     restart: unless-stopped
     # No external ports — log aggregation only
 
 networks:
-  kraken-internal:
+  vibeshield-internal:
     driver: bridge
     internal: true  # No external internet access — default deny

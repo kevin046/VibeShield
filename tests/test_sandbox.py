@@ -3,7 +3,7 @@
 import subprocess as subprocess_module
 from unittest.mock import patch, MagicMock
 from core.layer1_sandbox import (
-    KrakenSandbox, SandboxState, SandboxResult, EgressRule, SandboxConfig
+    VibeShieldSandbox, SandboxState, SandboxResult, EgressRule, SandboxConfig
 )
 
 
@@ -16,9 +16,9 @@ class TestSandboxConfig:
 
     def test_config_from_env(self, monkeypatch):
         # Set env vars BEFORE creating the config object
-        monkeypatch.setenv("KRAKEN_NETWORK_MODE", "restricted")
-        monkeypatch.setenv("KRAKEN_MEMORY_LIMIT", "1g")
-        monkeypatch.setenv("KRAKEN_TASK_TIMEOUT", "600")
+        monkeypatch.setenv("VIBESHIELD_NETWORK_MODE", "restricted")
+        monkeypatch.setenv("VIBESHIELD_MEMORY_LIMIT", "1g")
+        monkeypatch.setenv("VIBESHIELD_TASK_TIMEOUT", "600")
         # Reimport to get fresh module-level defaults
         import importlib
         import core.config
@@ -37,17 +37,17 @@ class TestEgressRule:
         assert rule.port == 443
 
 
-class TestKrakenSandbox:
+class TestVibeShieldSandbox:
     def test_init_creates_unique_name(self):
-        s1 = KrakenSandbox("task-1")
-        s2 = KrakenSandbox("task-2")
+        s1 = VibeShieldSandbox("task-1")
+        s2 = VibeShieldSandbox("task-2")
         assert s1.container_name != s2.container_name
         assert s1.state == SandboxState.PENDING
         assert s1.task_id == "task-1"
 
     def test_deploy_agent_network_none(self):
         config = SandboxConfig(network_mode="none")
-        sandbox = KrakenSandbox("test-task", config=config)
+        sandbox = VibeShieldSandbox("test-task", config=config)
 
         with patch("core.layer1_sandbox.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
@@ -64,7 +64,7 @@ class TestKrakenSandbox:
             assert call_args[idx + 1] == "none"
 
     def test_deploy_agent_caps_dropped(self):
-        sandbox = KrakenSandbox("test-task")
+        sandbox = VibeShieldSandbox("test-task")
 
         with patch("core.layer1_sandbox.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
@@ -78,7 +78,7 @@ class TestKrakenSandbox:
 
     def test_deploy_agent_timeout(self):
         config = SandboxConfig(timeout_seconds=1)
-        sandbox = KrakenSandbox("test-task", config=config)
+        sandbox = VibeShieldSandbox("test-task", config=config)
 
         with patch("core.layer1_sandbox.subprocess.run") as mock_run:
             mock_run.side_effect = subprocess_module.TimeoutExpired(cmd="podman", timeout=1)
@@ -88,7 +88,7 @@ class TestKrakenSandbox:
         assert result.state == SandboxState.TIMEOUT
 
     def test_cryptographic_shred(self):
-        sandbox = KrakenSandbox("test-task")
+        sandbox = VibeShieldSandbox("test-task")
         sandbox.state = SandboxState.RUNNING
 
         with patch("core.layer1_sandbox.subprocess.run") as mock_run:

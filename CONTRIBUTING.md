@@ -1,4 +1,4 @@
-# Contributing to the Kraken Security Framework
+# Contributing to the VibeShield Security Framework
 
 Thanks for your interest in contributing! This document outlines the process.
 

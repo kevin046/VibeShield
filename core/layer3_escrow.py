@@ -18,7 +18,7 @@ from enum import Enum
 
 from core.config import EscrowConfig
 
-logger = logging.getLogger("kraken.layer3")
+logger = logging.getLogger("vibeshield.layer3")
 
 
 class BountyState(Enum):
@@ -41,7 +41,7 @@ class DisputeResolution(Enum):
 
 @dataclass
 class Bounty:
-    """A task posted on the Kraken marketplace."""
+    """A task posted on the VibeShield marketplace."""
     bounty_id: str
     client_id: str
     title: str
@@ -367,7 +367,7 @@ class EscrowEngine:
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Kraken Layer 3 Escrow Engine")
+    parser = argparse.ArgumentParser(description="VibeShield Layer 3 Escrow Engine")
     subparsers = parser.add_subparsers(dest="command")
 
     # Create bounty

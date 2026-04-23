@@ -1,4 +1,4 @@
-# Kraken Security Framework
+# VibeShield Security Framework
 
 <p align="center">
   <strong>Infrastructure for Trustless Autonomous AI Agent Workforces</strong>
@@ -20,9 +20,9 @@
 
 ## Overview
 
-The Kraken Security Framework provides the essential infrastructure for deploying autonomous AI agents in high-security enterprise environments. It enforces a **Zero-Trust** containerization model where agents run as unprivileged user processes, isolated by Linux namespaces and hardware-backed Trusted Execution Environments (TEE).
+The VibeShield Security Framework provides the essential infrastructure for deploying autonomous AI agents in high-security enterprise environments. It enforces a **Zero-Trust** containerization model where agents run as unprivileged user processes, isolated by Linux namespaces and hardware-backed Trusted Execution Environments (TEE).
 
-Built on [Podman](https://podman.io/), Kraken eliminates the daemon-based attack surface that plagues traditional container runtimes. Every agent executes in a rootless, ephemeral container with no persistent state — cryptographically shredded after each task.
+Built on [Podman](https://podman.io/), VibeShield eliminates the daemon-based attack surface that plagues traditional container runtimes. Every agent executes in a rootless, ephemeral container with no persistent state — cryptographically shredded after each task.
 
 ## The Three Layers
 
@@ -41,7 +41,7 @@ Built on [Podman](https://podman.io/), Kraken eliminates the daemon-based attack
 
 ## Why Podman?
 
-| Property | Traditional (Docker) | Kraken (Podman) |
+| Property | Traditional (Docker) | VibeShield (Podman) |
 |---|---|---|
 | Daemon | Root-level daemon required | Daemonless |
 | Execution | Privileged by default | Rootless by default |
@@ -69,7 +69,7 @@ cd VibeShield
 pip install -r requirements.txt
 
 # Build the base image
-podman build -t clawmolt/kraken-base:latest -f Containerfile .
+podman build -t vibeshield/base:latest -f Containerfile .
 
 # Run a sandboxed agent
 python -m core.layer1_sandbox --task-id demo --payload "encrypted_task_data"
@@ -89,12 +89,12 @@ podman-compose -f podman-compose.yaml ps
 
 ```bash
 # Convert podman-compose to native systemd units
-podman generate kube kraken-orchestrator | podman play kube --replace -
+podman generate kube vibeshield-orchestrator | podman play kube --replace -
 
 # Generate systemd quadlet file from a container
-podman generate systemd --new --name kraken-orchestrator > ~/.config/systemd/user/kraken-orchestrator.container
+podman generate systemd --new --name vibeshield-orchestrator > ~/.config/systemd/user/vibeshield-orchestrator.container
 systemctl --user daemon-reload
-systemctl --user enable --now kraken-orchestrator
+systemctl --user enable --now vibeshield-orchestrator
 ```
 
 ## Architecture
@@ -159,7 +159,7 @@ VibeShield/
 
 ## Agent Command Protocol
 
-Agents interact with the Kraken infrastructure through standardized commands:
+Agents interact with the VibeShield infrastructure through standardized commands:
 
 | Command | Purpose |
 |---|---|
@@ -173,7 +173,7 @@ Agents interact with the Kraken infrastructure through standardized commands:
 
 ## Security Posture
 
-Kraken is designed around **defense in depth**:
+VibeShield is designed around **defense in depth**:
 
 - No root access required at any layer
 - Network isolation by default (opt-in egress through audited proxy)

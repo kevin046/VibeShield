@@ -1,5 +1,5 @@
 """
-Agent Command Protocol — Standardized interface between agents and Kraken infrastructure.
+Agent Command Protocol — Standardized interface between agents and VibeShield infrastructure.
 
 Agents communicate with the platform through a fixed set of commands.
 Each command is validated, logged, and routed to the appropriate layer.
@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Any
 from enum import Enum
 
-logger = logging.getLogger("kraken.api")
+logger = logging.getLogger("vibeshield.api")
 
 
 class CommandStatus(Enum):
@@ -39,7 +39,7 @@ class CommandType(Enum):
 
 @dataclass
 class AgentCommand:
-    """A validated command from an agent to the Kraken platform."""
+    """A validated command from an agent to VibeShield platform."""
     command_type: CommandType
     agent_id: str
     payload: dict = field(default_factory=dict)
@@ -89,7 +89,7 @@ class CommandRouter:
 
     Every command is logged for audit purposes. Commands are validated
     against the agent's current task state before being forwarded to
-    the appropriate Kraken layer.
+    the appropriate VibeShield layer.
     """
 
     def __init__(self):

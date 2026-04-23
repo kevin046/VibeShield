@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Quick install script for the Kraken Security Framework
+# Quick install script for the VibeShield Security Framework
 # Prerequisites: Podman 4.x+, Python 3.11+
 
 set -euo pipefail
 
-echo "=== Kraken Security Framework Installer ==="
+echo "=== VibeShield Security Framework Installer ==="
 echo ""
 
 # Check prerequisites
@@ -38,8 +38,8 @@ pip install -r requirements.txt -q
 
 # Build the base image
 echo ""
-echo "Building Kraken base image..."
-podman build -t clawmolt/kraken-base:latest -f Containerfile .
+echo "Building VibeShield base image..."
+podman build -t vibeshield/base:latest -f Containerfile .
 
 echo ""
 echo "=== Installation Complete ==="

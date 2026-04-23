@@ -21,7 +21,7 @@ from enum import Enum
 
 from core.config import SandboxConfig
 
-logger = logging.getLogger("kraken.layer1")
+logger = logging.getLogger("vibeshield.layer1")
 
 
 class SandboxState(Enum):
@@ -56,7 +56,7 @@ class EgressRule:
     description: str = ""
 
 
-class KrakenSandbox:
+class VibeShieldSandbox:
     """
     Manages rootless Podman containers for confidential agent execution.
 
@@ -69,7 +69,7 @@ class KrakenSandbox:
 
     def __init__(self, task_id: str, config: Optional[SandboxConfig] = None):
         self.task_id = task_id
-        self.container_name = f"kraken_task_{uuid.uuid4().hex[:8]}"
+        self.container_name = f"vs_task_{uuid.uuid4().hex[:8]}"
         self.config = config or SandboxConfig()
         self.state = SandboxState.PENDING
         self._start_time: Optional[float] = None
@@ -194,7 +194,7 @@ class KrakenSandbox:
         """
         # Replace --network=none with a restricted network
         cmd = [c for c in cmd if not c.startswith("--network")]
-        cmd.extend(["--network", "kraken-restricted"])
+        cmd.extend(["--network", "vibeshield-restricted"])
 
         for rule in rules:
             # Log the rule for audit trail
@@ -289,7 +289,7 @@ class KrakenSandbox:
                 # Check network mode
                 checks["network_isolated"] = host_config.get(
                     "NetworkMode", ""
-                ) in ("none", "kraken-restricted")
+                ) in ("none", "vibeshield-restricted")
 
                 # Check read-only rootfs
                 checks["read_only_fs"] = host_config.get("ReadonlyRootfs", False)
@@ -324,7 +324,7 @@ class KrakenSandbox:
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Kraken Layer 1 Sandbox")
+    parser = argparse.ArgumentParser(description="VibeShield Layer 1 Sandbox")
     parser.add_argument("--task-id", required=True, help="Task identifier")
     parser.add_argument("--payload", required=True, help="Encrypted payload")
     parser.add_argument("--timeout", type=int, default=300, help="Task timeout in seconds")
@@ -333,7 +333,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
     config = SandboxConfig(timeout_seconds=args.timeout)
-    sandbox = KrakenSandbox(task_id=args.task_id, config=config)
+    sandbox = VibeShieldSandbox(task_id=args.task_id, config=config)
     result = sandbox.deploy_agent(encrypted_payload=args.payload)
 
     print(f"Task {result.task_id}: {result.state.value}")

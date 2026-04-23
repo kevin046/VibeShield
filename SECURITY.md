@@ -2,11 +2,11 @@
 
 ## Supported Versions
 
-The Kraken Security Framework follows semantic versioning. Security patches are applied to the latest release branch.
+The VibeShield Security Framework follows semantic versioning. Security patches are applied to the latest release branch.
 
 ## Reporting a Vulnerability
 
-We take security vulnerabilities seriously. If you discover a security issue in the Kraken Security Framework, please report it responsibly.
+We take security vulnerabilities seriously. If you discover a security issue in the VibeShield Security Framework, please report it responsibly.
 
 ### Do NOT open a public GitHub issue.
 
@@ -39,7 +39,7 @@ Instead, report vulnerabilities via:
 
 ## Security Architecture
 
-The Kraken Security Framework is designed with the following threat model:
+The VibeShield Security Framework is designed with the following threat model:
 
 ### In Scope
 - Container escape via Podman misconfiguration

@@ -23,7 +23,7 @@ from enum import Enum
 
 from core.config import OrchestratorConfig
 
-logger = logging.getLogger("kraken.layer2")
+logger = logging.getLogger("vibeshield.layer2")
 
 
 class ConfidenceLevel(Enum):
@@ -164,7 +164,7 @@ class OrchestrationEngine:
         challenges = [
             Challenge(
                 challenge_type=ChallengeType.WORD_COUNT,
-                prompt="Summarize the Kraken protocol in exactly 10 words. No more, no less.",
+                prompt="Summarize the VibeShield protocol in exactly 10 words. No more, no less.",
                 constraints={"exact_word_count": 10},
                 max_response_ms=self.config.echo_timeout_ms,
                 difficulty=difficulty,
@@ -304,7 +304,7 @@ no_violations = True  # Used in _calculate_confidence
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Kraken Layer 2 Orchestrator")
+    parser = argparse.ArgumentParser(description="VibeShield Layer 2 Orchestrator")
     parser.add_argument("--agent-id", required=True)
     parser.add_argument("--model", required=True, help="Declared model name")
     parser.add_argument("--response", required=True, help="Agent's response text")
