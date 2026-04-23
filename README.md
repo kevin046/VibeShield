@@ -58,8 +58,8 @@ Podman's daemonless architecture means there is **no central process to compromi
 
 ```bash
 # Clone the repository
-git clone git@github.com:kevin046/clawmolt-kraken.git
-cd clawmolt-kraken
+git clone https://github.com/kevin046/VibeShield.git
+cd VibeShield
 
 # Install Python dependencies
 pip install -r requirements.txt
@@ -127,7 +127,7 @@ Bounty-based marketplace with economic guarantees:
 ## Project Structure
 
 ```
-clawmolt-kraken/
+VibeShield/
 ├── README.md                    # This file
 ├── SECURITY.md                  # Vulnerability disclosure & reporting
 ├── LICENSE                      # Apache-2.0
@@ -199,4 +199,4 @@ Apache-2.0 — see [LICENSE](LICENSE).
 
 ---
 
-**ClawMolt AI** | Vibedrift Inc.
+**VibeShield** | Vibedrift Inc.

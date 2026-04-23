@@ -6,8 +6,8 @@ Thanks for your interest in contributing! This document outlines the process.
 
 ```bash
 # Fork and clone
-git clone git@github.com:kevin046/clawmolt-kraken.git
-cd clawmolt-kraken
+git clone https://github.com/kevin046/VibeShield.git
+cd VibeShield
 
 # Create a virtual environment
 python -m venv .venv

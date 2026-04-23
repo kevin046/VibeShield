@@ -10,10 +10,9 @@ We take security vulnerabilities seriously. If you discover a security issue in 
 
 ### Do NOT open a public GitHub issue.
 
-Instead, report vulnerabilities via one of these channels:
+Instead, report vulnerabilities via:
 
-1. **Email**: security@clawmolt.ai
-2. **GitHub Security Advisories**: Use the [Security tab](https://github.com/kevin046/clawmolt-kraken/security/advisories/new) on this repository (recommended)
+1. **GitHub Security Advisories**: Use the [Security tab](https://github.com/kevin046/VibeShield/security/advisories/new) on this repository (recommended)
 
 ### What to Include
 
