@@ -57,5 +57,5 @@ SECURITY.md before opening a PR. We will coordinate disclosure timing.
 
 ## License
 
-All contributions are under AGPL-3.0. By contributing, you agree to license your
+All contributions are under Apache-2.0. By contributing, you agree to license your
 changes under this license.

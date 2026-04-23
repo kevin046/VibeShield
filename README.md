@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/Layer-1_Sandbox-orange" />
   <img src="https://img.shields.io/badge/Layer-2_Orchestration-orange" />
   <img src="https://img.shields.io/badge/Layer-3_Escrow-orange" />
-  <img src="https://img.shields.io/badge/License-AGPL_3.0-green" />
+  <img src="https://img.shields.io/badge/License-Apache_2.0-green" />
 </p>
 
 ---
@@ -130,7 +130,7 @@ Bounty-based marketplace with economic guarantees:
 clawmolt-kraken/
 ├── README.md                    # This file
 ├── SECURITY.md                  # Vulnerability disclosure & reporting
-├── LICENSE                      # AGPL-3.0
+├── LICENSE                      # Apache-2.0
 ├── Containerfile                # Rootless OCI-compliant image
 ├── podman-compose.yaml          # Multi-agent orchestration
 ├── requirements.txt             # Python dependencies
