@@ -189,9 +189,13 @@ Kraken is designed around **defense in depth**:
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
+## Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=kevin046/VibeShield&type=Date)](https://star-history.com/#kevin046/VibeShield&Date)
+
 ## License
 
-AGPL-3.0 — see [LICENSE](LICENSE).
+Apache-2.0 — see [LICENSE](LICENSE).
 
 ---
 
