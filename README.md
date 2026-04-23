@@ -1,7 +1,7 @@
 # VibeShield Security Framework
 
 <p align="center">
-  <strong>Infrastructure for Trustless Autonomous AI Agent Workforces</strong>
+  <strong>Zero-Trust Podman Security for Autonomous AI Agent Workforces</strong>
 </p>
 
 <p align="center">
