@@ -205,14 +205,16 @@ class SeccompProfile:
         """Generate the seccomp profile as JSON."""
         return json.dumps(self.to_dict(), indent=indent)
 
-    def save(self, path: str) -> str:
+    def save(self, path: str, base_dir: str = "/var/lib/vibeshield/seccomp") -> str:
         """Save the profile to a JSON file. Returns the path."""
+        from core.security.utils import validate_path
+        validated_path = validate_path(base_dir, path, allow_create=True)
         content = self.to_json()
-        os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
-        with open(path, "w") as f:
+        os.makedirs(os.path.dirname(validated_path) if os.path.dirname(validated_path) else ".", exist_ok=True)
+        with open(validated_path, "w") as f:
             f.write(content)
-        logger.info(f"Seccomp profile saved: {path} ({len(self._allowed_syscalls)} syscalls allowed)")
-        return path
+        logger.info(f"Seccomp profile saved: {validated_path} ({len(self._allowed_syscalls)} syscalls allowed)")
+        return validated_path
 
     @property
     def syscall_count(self) -> int:

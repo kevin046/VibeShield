@@ -15,7 +15,7 @@ Verification confidence levels:
 import time
 import logging
 import hashlib
-import random
+import secrets
 import string
 from dataclasses import dataclass, field
 from typing import Optional
@@ -199,7 +199,7 @@ class OrchestrationEngine:
             ),
         ]
 
-        return random.choice(challenges)
+        return secrets.choice(challenges)
 
     def _analyze_constraints(
         self, response: str, challenge: Challenge

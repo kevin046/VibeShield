@@ -137,22 +137,22 @@ class CommandRouter:
                 status=CommandStatus.DENIED,
                 command_type=command.command_type,
                 agent_id=command.agent_id,
-                message=str(e),
+                message="Permission denied",
             )
         except TimeoutError as e:
             return CommandResponse(
                 status=CommandStatus.TIMEOUT,
                 command_type=command.command_type,
                 agent_id=command.agent_id,
-                message=str(e),
+                message="Operation timed out",
             )
         except Exception as e:
-            logger.error(f"Command handler error: {e}")
+            logger.error(f"Command handler error: {e}", exc_info=True)
             return CommandResponse(
                 status=CommandStatus.DENIED,
                 command_type=command.command_type,
                 agent_id=command.agent_id,
-                message=f"Internal error: {e}",
+                message="Internal error",
             )
 
     def _log_command(self, command: AgentCommand):

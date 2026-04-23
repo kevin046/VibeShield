@@ -13,6 +13,7 @@ is encrypted and the keys are shredded after task completion.
 
 import subprocess
 import os
+import re
 import logging
 import hashlib
 import uuid
@@ -95,6 +96,15 @@ class WorkspaceManager:
         """
         size_mb = size_mb or self.config.size_mb
         encryption = encryption if encryption is not None else self.config.encryption_enabled
+
+        # Validate task_id (prevent path traversal via task_id)
+        if not task_id or not re.match(r"^[a-zA-Z0-9_-]+$", task_id):
+            raise ValueError(f"Invalid task_id: {task_id!r} (must match [a-zA-Z0-9_-]+)")
+
+        # Validate size_mb (prevent resource exhaustion)
+        max_size = self.config.size_mb * 5  # Allow up to 5x default
+        if size_mb < 1 or size_mb > max_size:
+            raise ValueError(f"Invalid size_mb: {size_mb} (must be 1-{max_size})")
 
         workspace_id = f"ws_{task_id}_{uuid.uuid4().hex[:8]}"
         mount_path = os.path.join(self.config.mount_base, workspace_id)

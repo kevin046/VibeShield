@@ -180,12 +180,12 @@ class EgressProxy:
         # Record request for rate limiting (before check, so subsequent calls count it)
         self._record_request(agent_id)
 
-        # Check protocol
-        allowed_protocol = rule.protocol.value if rule else "https"
-        if protocol.lower() not in (allowed_protocol, "https", "wss"):
+        # Check protocol — only the rule's protocol is allowed
+        allowed_protocol = rule.protocol.value
+        if protocol.lower() != allowed_protocol:
             logger.warning(f"Egress DENIED (protocol): {agent_id} -> {host} via {protocol}")
             self._record_event(agent_id, task_id, host, port, protocol,
-                               EgressDecision.DENY_PROTOCOL, f"Protocol not allowed: {protocol}")
+                               EgressDecision.DENY_PROTOCOL, f"Protocol not allowed: {protocol} (expected {allowed_protocol})")
             return EgressDecision.DENY_PROTOCOL
 
         # Check rate limit

@@ -69,15 +69,11 @@ class TestSeccompProfile:
     def test_save_creates_file(self):
         p = SeccompProfile()
         p.add_syscalls({"read"})
-        with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as f:
-            path = f.name
-        try:
-            p.save(path)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = p.save("profile.json", base_dir=tmpdir)
             with open(path) as f:
                 data = json.load(f)
             assert "defaultAction" in data
-        finally:
-            os.unlink(path)
 
     def test_audit_mode(self):
         p = SeccompProfile(audit_mode=True)
@@ -168,19 +164,15 @@ class TestAuditLog:
         assert len(results) == 1
 
     def test_export_and_import(self):
-        log = AuditLog()
-        for i in range(5):
-            log.record("test", "info", f"event_{i}", agent_id="agent-a")
-        with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False, mode="w") as f:
-            path = f.name
-        try:
-            log.export_jsonl(path)
-            log2 = AuditLog()
-            assert log2.import_jsonl(path) is True
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log = AuditLog(audit_dir=tmpdir)
+            for i in range(5):
+                log.record("test", "info", f"event_{i}", agent_id="agent-a")
+            log.export_jsonl("audit.jsonl")
+            log2 = AuditLog(audit_dir=tmpdir)
+            assert log2.import_jsonl("audit.jsonl") is True
             assert log2.length == 5
             assert log2.verify_chain()["valid"] is True
-        finally:
-            os.unlink(path)
 
     def test_statistics(self):
         log = AuditLog()
@@ -500,3 +492,199 @@ class TestWorkspaceManager:
         # Only the hash is stored, never the key
         assert len(ws.encryption_key_hash) == 64  # SHA256 hex
         assert ws.encryption_key_hash != ""
+
+
+# ── Security Utility Tests ──
+
+class TestSecurityUtils:
+    def test_validate_path_within_base(self, tmp_path):
+        from core.security.utils import validate_path
+        base = str(tmp_path)
+        safe = str(tmp_path / "subdir" / "file.txt")
+        result = validate_path(base, "subdir/file.txt", allow_create=True)
+        assert result == os.path.realpath(safe)
+
+    def test_validate_path_traversal_blocked(self, tmp_path):
+        from core.security.utils import validate_path
+        base = str(tmp_path / "sandbox")
+        os.makedirs(base)
+        with pytest.raises(ValueError, match="traversal"):
+            validate_path(base, "../../etc/passwd")
+
+    def test_validate_path_dotdot_blocked(self, tmp_path):
+        from core.security.utils import validate_path
+        base = str(tmp_path)
+        with pytest.raises(ValueError, match="traversal"):
+            validate_path(base, "foo/../bar/../../../etc/shadow")
+
+    def test_validate_identifier_safe(self):
+        from core.security.utils import validate_identifier
+        assert validate_identifier("agent-123", "agent_id") == "agent-123"
+
+    def test_validate_identifier_special_chars(self):
+        from core.security.utils import validate_identifier
+        with pytest.raises(ValueError, match="Invalid agent_id"):
+            validate_identifier("../etc/passwd", "agent_id")
+
+    def test_validate_identifier_empty(self):
+        from core.security.utils import validate_identifier
+        with pytest.raises(ValueError, match="non-empty"):
+            validate_identifier("", "id")
+
+    def test_validate_identifier_too_long(self):
+        from core.security.utils import validate_identifier
+        with pytest.raises(ValueError, match="too long"):
+            validate_identifier("a" * 300, "id")
+
+    def test_sanitize_env_var_name_valid(self):
+        from core.security.utils import sanitize_env_var_name
+        assert sanitize_env_var_name("MY_VAR") == "MY_VAR"
+
+    def test_sanitize_env_var_name_invalid(self):
+        from core.security.utils import sanitize_env_var_name
+        with pytest.raises(ValueError):
+            sanitize_env_var_name("LD_PRELOAD")
+        with pytest.raises(ValueError):
+            sanitize_env_var_name("my-var")
+
+    def test_sanitize_env_var_value_rejects_newline(self):
+        from core.security.utils import sanitize_env_var_value
+        with pytest.raises(ValueError, match="newline"):
+            sanitize_env_var_value("value\nmalicious")
+
+    def test_sanitize_env_var_value_rejects_null(self):
+        from core.security.utils import sanitize_env_var_value
+        with pytest.raises(ValueError, match="null"):
+            sanitize_env_var_value("value\x00malicious")
+
+
+# ── Sandbox Input Validation Tests ──
+
+class TestSandboxInputValidation:
+    def test_task_id_with_traversal_rejected(self):
+        from core.layer1_sandbox import SAFE_TASK_ID_PATTERN
+        assert not SAFE_TASK_ID_PATTERN.match("../etc/passwd")
+        assert not SAFE_TASK_ID_PATTERN.match("task/../../escape")
+
+    def test_task_id_safe(self):
+        from core.layer1_sandbox import SAFE_TASK_ID_PATTERN
+        assert SAFE_TASK_ID_PATTERN.match("task-123")
+        assert SAFE_TASK_ID_PATTERN.match("agent_build")
+
+    def test_entrypoint_validation(self):
+        from core.layer1_sandbox import SAFE_ENTRYPOINTS
+        assert "python3" in SAFE_ENTRYPOINTS
+        assert "bash" not in SAFE_ENTRYPOINTS
+        assert "sh" not in SAFE_ENTRYPOINTS
+
+    def test_dangerous_env_vars_blocked(self):
+        from core.layer1_sandbox import DANGEROUS_ENV_NAMES
+        assert "LD_PRELOAD" in DANGEROUS_ENV_NAMES
+        assert "PATH" in DANGEROUS_ENV_NAMES
+        assert "PYTHONPATH" in DANGEROUS_ENV_NAMES
+        assert "DYLD_INSERT_LIBRARIES" in DANGEROUS_ENV_NAMES
+
+
+# ── Egress Protocol Bypass Tests ──
+
+class TestEgressProtocolEnforcement:
+    def test_http_blocked_when_only_https_allowed(self):
+        proxy = EgressProxy()
+        proxy.add_domain("api.test.com", 443, protocol=Protocol.HTTPS)
+        decision = proxy.evaluate("a1", "t1", "api.test.com", 443, "http")
+        assert decision == EgressDecision.DENY_PROTOCOL
+
+    def test_https_allowed(self):
+        proxy = EgressProxy()
+        proxy.add_domain("api.test.com", 443, protocol=Protocol.HTTPS)
+        decision = proxy.evaluate("a1", "t1", "api.test.com", 443, "https")
+        assert decision == EgressDecision.ALLOW
+
+    def test_ftp_blocked(self):
+        proxy = EgressProxy()
+        proxy.add_domain("files.test.com", 443, protocol=Protocol.HTTPS)
+        decision = proxy.evaluate("a1", "t1", "files.test.com", 21, "ftp")
+        assert decision == EgressDecision.DENY_PROTOCOL
+
+
+# ── Command Router Info Exposure Tests ──
+
+class TestCommandRouterInfoExposure:
+    def test_exception_message_not_leaked(self):
+        from api.commands import CommandRouter, AgentCommand, CommandType
+        router = CommandRouter()
+        router.register_handler(CommandType.HEARTBEAT, lambda cmd: (_ for _ in ()).throw(Exception("secret_database_password=abc123")))
+        cmd = AgentCommand(command_type=CommandType.HEARTBEAT, agent_id="test-agent")
+        response = router.route(cmd)
+        assert "abc123" not in response.message
+        assert response.message == "Internal error"
+
+    def test_permission_error_sanitized(self):
+        from api.commands import CommandRouter, AgentCommand, CommandType
+        router = CommandRouter()
+        router.register_handler(CommandType.HEARTBEAT, lambda cmd: (_ for _ in ()).throw(PermissionError("secret path /etc/shadow")))
+        cmd = AgentCommand(command_type=CommandType.HEARTBEAT, agent_id="test-agent")
+        response = router.route(cmd)
+        assert "/etc/shadow" not in response.message
+        assert response.message == "Permission denied"
+
+    def test_timeout_sanitized(self):
+        from api.commands import CommandRouter, AgentCommand, CommandType
+        router = CommandRouter()
+        router.register_handler(CommandType.HEARTBEAT, lambda cmd: (_ for _ in ()).throw(TimeoutError("internal timeout details")))
+        cmd = AgentCommand(command_type=CommandType.HEARTBEAT, agent_id="test-agent")
+        response = router.route(cmd)
+        assert "internal timeout details" not in response.message
+        assert response.message == "Operation timed out"
+
+
+# ── Audit Log Import Validation Tests ──
+
+class TestAuditLogImportValidation:
+    def test_import_rejects_path_traversal(self):
+        log = AuditLog(audit_dir="/safe/dir")
+        result = log.import_jsonl("../../etc/passwd")
+        assert result is False
+
+    def test_import_rejects_tampered_hash(self):
+        log = AuditLog()
+        log.record("test", "info", "original")
+        # Get the entry and tamper with the event text
+        entry = log._entries[0]
+        data = json.loads(entry.to_json())
+        data["event"] = "TAMPERED"
+        # Recompute hash with tampered data (it won't match original)
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            f.write(json.dumps(data) + "\n")
+            path = f.name
+        try:
+            # This should fail because the first entry's prev_hash won't match
+            # the chain (since we're importing into a log that already has entries)
+            log2 = AuditLog(audit_dir=os.path.dirname(path))
+            result = log2.import_jsonl(os.path.basename(path))
+            assert result is False
+        finally:
+            os.unlink(path)
+
+    def test_import_rejects_oversized_details(self):
+        log = AuditLog(audit_dir="/tmp")
+        import tempfile
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".jsonl", delete=False) as f:
+            entry = {
+                "timestamp": time.time(),
+                "category": "test",
+                "severity": "info",
+                "event": "test",
+                "prev_hash": "x" * 64,
+                "entry_hash": "y" * 64,
+                "sequence": 1,
+                "details": {"huge": "x" * 20000},
+            }
+            f.write(json.dumps(entry) + "\n")
+            path = f.name
+        try:
+            result = log.import_jsonl(os.path.basename(path))
+            assert result is False
+        finally:
+            os.unlink(path)

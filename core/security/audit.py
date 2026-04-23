@@ -17,6 +17,7 @@ Verification: recompute chain from genesis, any mismatch = tampered.
 import json
 import hashlib
 import time
+import os
 import logging
 from dataclasses import dataclass, field, asdict
 from typing import Optional, Any
@@ -98,8 +99,9 @@ class AuditLog:
 
     GENESIS_HASH = "GENESIS" * 4  # 28 chars, clearly non-SHA256
 
-    def __init__(self, log_id: Optional[str] = None):
+    def __init__(self, log_id: Optional[str] = None, audit_dir: str = "/var/lib/vibeshield/audit"):
         self.log_id = log_id or hashlib.sha256(str(time.time()).encode()).hexdigest()[:12]
+        self.audit_dir = audit_dir
         self._entries: list[AuditEntry] = []
         self._index: dict[int, int] = {}  # sequence -> position in _entries
 
@@ -224,31 +226,90 @@ class AuditLog:
 
     def export_jsonl(self, path: str):
         """Export the full log as JSON Lines (append-friendly format)."""
-        with open(path, "a") as f:
+        from core.security.utils import validate_path
+        validated_path = validate_path(self.audit_dir, path, allow_create=True)
+        os.makedirs(os.path.dirname(validated_path) if os.path.dirname(validated_path) else ".", exist_ok=True)
+        with open(validated_path, "a") as f:
             for entry in self._entries:
                 f.write(entry.to_json() + "\n")
-        logger.info(f"Audit log exported: {path} ({len(self._entries)} entries)")
+        logger.info(f"Audit log exported: {validated_path} ({len(self._entries)} entries)")
 
     def import_jsonl(self, path: str) -> bool:
-        """Import and verify a JSONL audit log. Returns True if chain is valid."""
+        """
+        Import and verify a JSONL audit log.
+        Entries are validated inline (not bulk-loaded) to prevent
+        race conditions with tampered data.
+        Returns True if chain is valid.
+        """
+        from core.security.utils import validate_path
         try:
-            with open(path, "r") as f:
-                for line in f:
+            validated_path = validate_path(self.audit_dir, path)
+        except ValueError:
+            logger.error(f"Import path escapes audit directory: {path}")
+            return False
+
+        try:
+            with open(validated_path, "r") as f:
+                for line_num, line in enumerate(f, 1):
                     line = line.strip()
                     if not line:
                         continue
                     data = json.loads(line)
-                    entry = AuditEntry(**data)
+
+                    # Validate entry structure immediately
+                    required_fields = {"timestamp", "category", "severity", "event", "prev_hash", "entry_hash", "sequence"}
+                    if not required_fields.issubset(data.keys()):
+                        logger.error(f"Import: entry {line_num} missing required fields")
+                        return False
+
+                    # Limit details dict size (prevent memory exhaustion)
+                    details = data.get("details", {})
+                    if isinstance(details, dict) and len(str(details)) > 10000:
+                        logger.error(f"Import: entry {line_num} details too large")
+                        return False
+
+                    entry = AuditEntry(
+                        timestamp=data["timestamp"],
+                        category=data["category"],
+                        severity=data["severity"],
+                        event=data["event"],
+                        agent_id=data.get("agent_id"),
+                        task_id=data.get("task_id"),
+                        details=details,
+                        prev_hash=data["prev_hash"],
+                        entry_hash=data["entry_hash"],
+                        sequence=data["sequence"],
+                    )
+
+                    # Inline verification: check chain linkage immediately
+                    if entry.sequence != len(self._entries) + 1:
+                        logger.error(f"Import: sequence gap at entry {line_num} (expected {len(self._entries) + 1}, got {entry.sequence})")
+                        return False
+                    if entry.prev_hash != self.last_hash:
+                        logger.error(f"Import: chain broken at entry {line_num}")
+                        return False
+                    # Verify hash wasn't tampered
+                    expected_hash = entry.compute_hash()
+                    if entry.entry_hash != expected_hash:
+                        logger.error(f"Import: hash mismatch at entry {line_num} (tampered)")
+                        return False
+
                     self._entries.append(entry)
                     self._index[entry.sequence] = len(self._entries) - 1
+
+            # Final chain verification (should be redundant with inline checks)
             result = self.verify_chain()
             if not result["valid"]:
-                logger.error(f"Imported log is tampered: {result['reason']}")
+                logger.error(f"Imported log verification failed: {result['reason']}")
                 self._entries.clear()
                 self._index.clear()
                 return False
+
             logger.info(f"Audit log imported: {len(self._entries)} entries, chain valid")
             return True
+        except json.JSONDecodeError as e:
+            logger.error(f"Import: invalid JSON at line: {e}")
+            return False
         except Exception as e:
             logger.error(f"Failed to import audit log: {e}")
             return False

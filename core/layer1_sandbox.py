@@ -9,12 +9,13 @@ Every task executes inside a rootless Podman container with:
 - Cryptographic shredding after task completion
 """
 
+import re
 import subprocess
-import uuid
-import logging
 import time
+import uuid
 import hashlib
-import json
+import logging
+import os
 from dataclasses import dataclass, field
 from typing import Optional
 from enum import Enum
@@ -31,6 +32,25 @@ class SandboxState(Enum):
     FAILED = "failed"
     SHREDDED = "shredded"
     TIMEOUT = "timeout"
+
+
+# Security: allowed environment variable names (allowlist)
+SAFE_ENV_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]*$")
+DANGEROUS_ENV_NAMES = frozenset({
+    "LD_PRELOAD", "LD_LIBRARY_PATH", "PATH", "PYTHONPATH",
+    "PYTHONSTARTUP", "PYTHONHOME", "PYTHONINSPECT",
+    "PERL5LIB", "PERLLIB", "CLASSPATH", "JAVA_HOME",
+    "IFS", "SHELL", "BASH_ENV", "ENV", "TERM_PROGRAM",
+    "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH",
+})
+
+# Security: allowed entrypoint binaries
+SAFE_ENTRYPOINTS = frozenset({
+    "python", "python3", "python3.11", "python3.12", "python3.13",
+})
+
+# Security: allowed task_id pattern
+SAFE_TASK_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 @dataclass
@@ -97,6 +117,17 @@ class VibeShieldSandbox:
         """
         self._start_time = time.perf_counter()
 
+        # Security: validate task_id (path traversal prevention)
+        if not SAFE_TASK_ID_PATTERN.match(self.task_id):
+            raise ValueError(f"Invalid task_id: must match [a-zA-Z0-9_-]+, got: {self.task_id!r}")
+
+        # Security: validate entrypoint against allowlist
+        if entrypoint not in SAFE_ENTRYPOINTS:
+            raise ValueError(
+                f"Blocked entrypoint: {entrypoint!r}. "
+                f"Allowed: {sorted(SAFE_ENTRYPOINTS)}"
+            )
+
         # Build the podman run command
         cmd = [
             "podman", "run",
@@ -116,9 +147,18 @@ class VibeShieldSandbox:
         if egress_rules:
             cmd = self._apply_egress_rules(cmd, egress_rules)
 
-        # Add environment variables
+        # Add environment variables (with security validation)
         if env_vars:
             for key, value in env_vars.items():
+                # Validate env var name format
+                if not SAFE_ENV_PATTERN.match(key):
+                    raise ValueError(f"Invalid env var name: {key!r} (must match [A-Z][A-Z0-9_]*)")
+                # Block dangerous env vars that can alter execution
+                if key in DANGEROUS_ENV_NAMES:
+                    raise ValueError(f"Blocked dangerous env var: {key}")
+                # Validate value (no newlines, null bytes)
+                if "\n" in value or "\0" in value:
+                    raise ValueError(f"Invalid env var value for {key}: contains newline or null byte")
                 cmd.extend(["--env", f"{key}={value}"])
 
         # Image and command
