@@ -37,6 +37,13 @@ Built on [Podman](https://podman.io/), VibeShield eliminates the daemon-based at
 │           Layer 1: Confidential Sandbox          │
 │  Rootless Podman · TEE · Egress filtering · Air-gap │
 └─────────────────────────────────────────────────┘
+         ↕
+┌─────────────────────────────────────────────────┐
+│          Security Subsystem (Cross-Layer)         │
+│  Seccomp · Audit Chain · Egress Proxy · Inj.     │
+│  Detection · Exfil Scanning · Image Verify ·     │
+│  Encrypted Workspaces                            │
+└─────────────────────────────────────────────────┘
 ```
 
 ## Why Podman?
@@ -143,7 +150,16 @@ VibeShield/
 │   ├── layer1_sandbox.py        # Podman rootless isolation & TEE logic
 │   ├── layer2_orchestrator.py   # Behavioral verification (Ping & Echo)
 │   ├── layer3_escrow.py         # Economic settlement & Rs scoring
-│   └── config.py                # Framework configuration
+│   ├── config.py                # Framework configuration
+│   └── security/                # Security subsystem
+│       ├── __init__.py          # Package exports
+│       ├── seccomp.py           # Syscall filtering profiles
+│       ├── audit.py             # Tamper-evident hash-chained logging
+│       ├── egress.py            # DNS allowlisting & connection proxy
+│       ├── injection.py         # Prompt injection detection
+│       ├── exfil.py             # Output exfiltration detection
+│       ├── image_verify.py      # Container image integrity verification
+│       └── workspace.py         # Encrypted tmpfs workspace management
 ├── api/
 │   ├── __init__.py
 │   └── commands.py              # Standardized agent command protocol
@@ -151,7 +167,8 @@ VibeShield/
 │   ├── __init__.py
 │   ├── test_sandbox.py
 │   ├── test_orchestrator.py
-│   └── test_escrow.py
+│   ├── test_escrow.py
+│   └── test_security.py         # Security subsystem tests (59 tests)
 └── scripts/
     ├── install.sh               # Quick install script
     └── quadlet_setup.sh         # systemd quadlet generator
@@ -173,14 +190,59 @@ Agents interact with the VibeShield infrastructure through standardized commands
 
 ## Security Posture
 
-VibeShield is designed around **defense in depth**:
+VibeShield is designed around **defense in depth** — multiple independent security layers that each provide protection even if another is compromised:
 
+### Sandbox Isolation (Layer 1)
 - No root access required at any layer
 - Network isolation by default (opt-in egress through audited proxy)
 - Ephemeral containers — keys destroyed after each task, not just deleted
 - No daemon socket — eliminates the most common container escape vector
 - SELinux/AppArmor integration for mandatory access control
-- Auditable proxy logs for every outbound connection
+
+### Kernel-Level Restrictions
+- **Seccomp profiles** — default-deny syscall filtering; only ~60 syscalls permitted out of 400+
+- Always-blocked: `ptrace`, `mount`, `userfaultfd`, `keyctl`, `bpf`, `unshare`, `kexec`
+- Three presets: `minimal` (no network), `compute` (CPU-bound), `network` (audited egress only)
+- Audit mode for testing before enforcement
+
+### Tamper-Evident Audit Chain
+- SHA-256 hash chaining — every log entry cryptographically linked to the previous
+- Tamper detection: any modification (insert, delete, change) breaks the chain
+- JSONL export for external analysis and long-term archival
+- Queryable by agent, category, severity, and time range
+
+### Egress Proxy & DNS Allowlisting
+- Default-deny: no outbound connection without explicit domain allowlisting
+- Wildcard support (`*.googleapis.com`) for API domains
+- Per-agent rate limiting (requests/minute)
+- Request size limits to prevent data exfiltration via large payloads
+- Full connection audit trail (host, port, protocol, bytes, decision)
+
+### Input Security
+- **Prompt injection detection** — scans all agent inputs before processing
+- 14 high-confidence malicious patterns (instruction override, jailbreak, role hijacking)
+- 7 medium-confidence suspicious patterns (system prompt probing, hidden instructions)
+- Obfuscation detection: zero-width chars, control characters, base64-encoded payloads
+- Any malicious match → immediate block
+
+### Output Security
+- **Exfiltration detection** — scans all agent outputs before delivery
+- Secret pattern matching: API keys, tokens, private keys, passwords, AWS credentials
+- PII detection: SSN, credit cards, emails, IP addresses
+- Shannon entropy analysis (sliding window) — detects encrypted/compressed data smuggling
+- Covert channel detection: hex/unicode escapes, long base64 strings, binary encoding
+- Size anomaly detection: flags outputs significantly larger than expected
+
+### Container Integrity
+- **Image verification** — SHA-256 digest pinning for all deployed images
+- Optional Cosign/Sigstore signature verification
+- Digest mismatch → deployment blocked, possible tampering alert
+
+### Encrypted Workspaces
+- tmpfs-backed (RAM-only, never touches disk)
+- Ephemeral encryption keys (generated per-task, shredded after use)
+- Multi-pass secure wipe (3-pass random overwrite) on teardown
+- Size-bounded to prevent resource exhaustion
 
 ## Enterprise Use Cases
 
