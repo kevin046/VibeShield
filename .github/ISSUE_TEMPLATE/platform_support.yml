@@ -1,0 +1,36 @@
+---
+name: Platform / Runtime Support
+about: Request support for a new OS, container runtime, or kernel version
+title: "[PLATFORM] "
+labels: enhancement, platform
+assignees: ""
+---
+
+## Platform Details
+
+- **OS** (distro and version):
+- **Kernel version**:
+- **Container runtime** (Podman / Docker / other):
+- **CPU architecture** (x86_64 / ARM64 / other):
+- **Python version**:
+
+## Request Type
+
+- [ ] New OS/distro support
+- [ ] New container runtime support
+- [ ] Kernel version compatibility issue
+- [ ] Architecture support (ARM64, etc.)
+
+## Description
+
+What platform are you trying to run on and what's happening?
+
+## Expected Behavior
+
+What should work on this platform?
+
+## Logs / Error Output
+
+```
+(paste relevant output)
+```

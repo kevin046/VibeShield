@@ -1,0 +1,46 @@
+---
+name: Security Advisory
+about: Report a security vulnerability (private, reviewed by maintainers only)
+title: "[SECURITY] "
+labels: security
+assignees: ""
+---
+
+> ⚠️ **For responsible disclosure, use [GitHub Security Advisories](https://github.com/kevin046/VibeShield/security/advisories/new) instead of public issues.**
+>
+> Only use this template if you cannot access the private reporting channel.
+
+## Vulnerability Type
+
+- [ ] Container escape
+- [ ] Privilege escalation
+- [ ] Data exfiltration / leakage
+- [ ] Network egress bypass
+- [ ] Supply chain attack
+- [ ] Denial of service
+- [ ] Other:
+
+## Severity
+
+- [ ] Critical (RCE, full data access)
+- [ ] High (privilege escalation, significant data leak)
+- [ ] Medium (limited information disclosure)
+- [ ] Low (best practice violation)
+
+## Description
+
+Clear description of the vulnerability.
+
+## Steps to Reproduce
+
+```bash
+# Minimal reproduction steps
+```
+
+## Impact
+
+What can an attacker achieve by exploiting this?
+
+## Mitigation Suggestions
+
+Any ideas for fixing this (optional).

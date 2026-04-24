@@ -1,0 +1,35 @@
+---
+name: Security Module Request
+about: Request a new security module or hardening feature
+title: "[FEATURE] "
+labels: enhancement
+assignees: ""
+---
+
+## Feature Description
+
+A clear description of the security module or feature you'd like.
+
+## Threat Model
+
+What threat does this address?
+
+- [ ] Container escape prevention
+- [ ] Network isolation / egress control
+- [ ] Data exfiltration prevention
+- [ ] Injection / prompt injection defense
+- [ ] Image supply chain security
+- [ ] Workspace encryption
+- [ ] Other:
+
+## Proposed Solution
+
+Describe your preferred implementation approach.
+
+## Alternatives Considered
+
+Any alternative approaches you've thought about.
+
+## Additional Context
+
+Reference implementations, papers, or existing tools that solve this.

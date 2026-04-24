@@ -255,6 +255,13 @@ VibeShield is designed around **defense in depth** — multiple independent secu
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
+## Community
+
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Security Policy](SECURITY.md)
+- [Discussions](https://github.com/kevin046/VibeShield/discussions)
+- [Issues](https://github.com/kevin046/VibeShield/issues)
+
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE).

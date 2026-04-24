@@ -1,0 +1,46 @@
+---
+name: Bug Report
+about: Report a security bug or unexpected behavior
+title: "[BUG] "
+labels: bug
+assignees: ""
+---
+
+## Bug Description
+
+A clear description of the bug or security issue.
+
+## Reproduction Steps
+
+```bash
+# Commands or configuration to reproduce
+```
+
+## Expected Behavior
+
+What you expected to happen.
+
+## Actual Behavior
+
+What actually happened (include error messages/tracebacks).
+
+## Environment
+
+- **OS**:
+- **Python version**:
+- **VibeShield version**:
+- **Container runtime** (Podman / Docker):
+- **Kernel version**:
+
+## Security Impact
+
+If this is a security-related bug, describe the potential impact:
+- [ ] Container escape
+- [ ] Network egress bypass
+- [ ] Data leakage
+- [ ] Privilege escalation
+- [ ] Not security-related
+
+## Additional Context
+
+Logs, configuration files, or anything else helpful.
