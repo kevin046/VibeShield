@@ -49,8 +49,16 @@ class TestSeccompProfile:
     def test_block_syscall_override(self):
         p = SeccompProfile()
         p.add_syscalls({"read", "write"})
-        p.block_syscall("read", errno=13)
+        p.block_syscall("read", errno=13, action="SCMP_ACT_ERRNO")
         assert "read" in p._blocked_specific
+        rule = p._blocked_specific["read"]
+        assert rule["errnoRet"] == 13
+
+    def test_block_syscall_kill_default(self):
+        p = SeccompProfile()
+        p.block_syscall("ptrace")
+        assert p._blocked_specific["ptrace"]["action"] == "SCMP_ACT_KILL"
+        assert p._blocked_specific["ptrace"]["args"] == []
 
     def test_to_dict_has_required_fields(self):
         p = SeccompProfile()
@@ -107,6 +115,46 @@ class TestSeccompProfile:
         assert "added" in diff
         assert "removed" in diff
         assert len(diff["added"]) > 0  # network syscalls added
+
+    def test_hardened_profile_from_podman_default(self):
+        """Test that from_podman_default produces a valid hardened profile."""
+        p = SeccompProfile.from_podman_default()
+        d = p.to_dict()
+        # Should have the Podman default action (ERRNO)
+        assert d["defaultAction"] == "SCMP_ACT_ERRNO"
+        # Should have KILL rules at the front for dangerous syscalls
+        kill_rules = [r for r in d["syscalls"] if r["action"] == "SCMP_ACT_KILL"]
+        assert len(kill_rules) > 0
+        # KILL rule should include dangerous syscalls
+        all_killed = set()
+        for r in kill_rules:
+            all_killed.update(r["names"])
+        assert "ptrace" in all_killed
+        assert "mount" in all_killed
+        assert "bpf" in all_killed
+
+    def test_validate_catches_empty_rules(self):
+        """Profile with no user-added rules still has blocklist rules, so no warning."""
+        p = SeccompProfile()
+        issues = p.validate()
+        # Blocklist rules are always present, so "No syscall rules" shouldn't fire
+        empty_issues = [i for i in issues if "No syscall rules" in i]
+        assert len(empty_issues) == 0
+
+    def test_validate_catches_missing_includes(self):
+        """Default-deny rules should always have includes/excludes."""
+        p = SeccompProfile()
+        p.add_syscalls({"read", "write"})
+        # The rules should all have includes/excludes — validate should be clean
+        issues = p.validate()
+        # No missing includes/excludes
+        includes_issues = [i for i in issues if "missing 'includes'" in i]
+        assert len(includes_issues) == 0
+
+    def test_blocked_count(self):
+        p = SeccompProfile()
+        count = p.blocked_count
+        assert count > 0  # Should have blocklist syscalls
 
 
 # ── Audit Log Tests ──
@@ -427,7 +475,9 @@ class TestWorkspaceManager:
         config = WorkspaceConfig(size_mb=10, encryption_enabled=False)
         manager = WorkspaceManager(config=config)
 
-        with patch("core.security.workspace.subprocess.run") as mock_run, \
+        # Patch _is_root to simulate root so tmpfs mount path is exercised
+        with patch("core.security.workspace._is_root", return_value=True), \
+             patch("core.security.workspace.subprocess.run") as mock_run, \
              patch("core.security.workspace.os.makedirs"):
             mock_run.return_value = MagicMock(returncode=0)
             ws = manager.create("task-1", size_mb=10)
@@ -436,11 +486,24 @@ class TestWorkspaceManager:
         assert ws.state == WorkspaceState.MOUNTED
         assert ws.encryption_key_hash != ""
 
+    def test_create_workspace_unprivileged(self):
+        """When not root, workspace falls back to CREATED state (no tmpfs)."""
+        config = WorkspaceConfig(size_mb=10, encryption_enabled=False)
+        manager = WorkspaceManager(config=config)
+
+        with patch("core.security.workspace._is_root", return_value=False), \
+             patch("core.security.workspace.os.makedirs"):
+            ws = manager.create("task-1", size_mb=10)
+
+        assert ws.workspace_id.startswith("ws_task-1_")
+        assert ws.state == WorkspaceState.CREATED
+
     def test_workspace_id_unique(self):
         config = WorkspaceConfig(encryption_enabled=False)
         manager = WorkspaceManager(config=config)
 
-        with patch("core.security.workspace.subprocess.run", return_value=MagicMock(returncode=0)), \
+        with patch("core.security.workspace._is_root", return_value=True), \
+             patch("core.security.workspace.subprocess.run", return_value=MagicMock(returncode=0)), \
              patch("core.security.workspace.os.makedirs"):
             ws1 = manager.create("task-1")
             ws2 = manager.create("task-1")
@@ -451,9 +514,10 @@ class TestWorkspaceManager:
         config = WorkspaceConfig(encryption_enabled=False)
         manager = WorkspaceManager(config=config)
 
-        with patch("core.security.workspace.subprocess.run") as mock_run, \
+        with patch("core.security.workspace._is_root", return_value=True), \
+             patch("core.security.workspace.subprocess.run") as mock_run, \
              patch("core.security.workspace.os.makedirs"), \
-             patch("core.security.workspace.os.rmdir"), \
+             patch("core.security.workspace.shutil.rmtree"), \
              patch("core.security.workspace.os.walk", return_value=[]), \
              patch("core.security.workspace.os.path.getsize", return_value=0):
             mock_run.return_value = MagicMock(returncode=0)

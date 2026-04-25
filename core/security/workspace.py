@@ -2,7 +2,8 @@
 Encrypted Workspace — tmpfs-backed encrypted scratch space for agents.
 
 Provides a volatile, encrypted filesystem for agent workspaces:
-- Backed by tmpfs (RAM-only, never touches disk)
+- Backed by tmpfs (RAM-only, never touches disk) when running as root
+- Falls back to regular directory with secure wipe when unprivileged
 - Optional dm-crypt encryption layer for defense against memory dumps
 - Automatic secure wipe on container teardown (3-pass overwrite)
 - Size-bounded to prevent resource exhaustion
@@ -11,6 +12,7 @@ Even if an attacker dumps container memory, the workspace data
 is encrypted and the keys are shredded after task completion.
 """
 
+import shutil
 import subprocess
 import os
 import re
@@ -55,15 +57,21 @@ class Workspace:
     wiped_at: Optional[float] = None
 
 
+def _is_root() -> bool:
+    """Check if the current process has root privileges."""
+    return os.geteuid() == 0
+
+
 class WorkspaceManager:
     """
     Manages encrypted tmpfs workspaces for agent tasks.
 
     Each workspace is:
-    1. Created as a tmpfs mount (RAM-only)
-    2. Optionally encrypted with dm-crypt (ephemeral key)
-    3. Sized to prevent resource exhaustion
-    4. Securely wiped on teardown (3-pass random overwrite)
+    1. Created as a tmpfs mount (RAM-only) — requires root
+    2. Falls back to a regular directory when unprivileged
+    3. Optionally encrypted with dm-crypt (ephemeral key, root only)
+    4. Sized to prevent resource exhaustion
+    5. Securely wiped on teardown (3-pass random overwrite)
 
     Usage:
         manager = WorkspaceManager()
@@ -71,6 +79,13 @@ class WorkspaceManager:
         # Pass ws.mount_path to the container as a volume
         # ... task runs ...
         manager.wipe(ws.workspace_id)
+
+    Note:
+        tmpfs mounting requires root (CAP_SYS_ADMIN). When running
+        unprivileged (e.g., rootless Podman), the manager automatically
+        falls back to a regular directory with secure wipe.
+        Container runtimes handle tmpfs via their own flags
+        (e.g., `podman run --tmpfs /workspace`).
     """
 
     def __init__(self, config: Optional[WorkspaceConfig] = None):
@@ -89,10 +104,13 @@ class WorkspaceManager:
         Args:
             task_id: Task identifier for tracking
             size_mb: Workspace size in MB (default from config)
-            encryption: Enable encryption (default from config)
+            encryption: Enable encryption (default from config).
+                        Only available when running as root.
 
         Returns:
-            Workspace object with mount_path for container mounting
+            Workspace object with mount_path for container mounting.
+            The workspace state will be MOUNTED if tmpfs succeeded,
+            or CREATED if falling back to a regular directory.
         """
         size_mb = size_mb or self.config.size_mb
         encryption = encryption if encryption is not None else self.config.encryption_enabled
@@ -116,29 +134,45 @@ class WorkspaceManager:
         # Create the mount directory
         os.makedirs(mount_path, mode=0o700, exist_ok=True)
 
-        if encryption:
-            # Use dm-crypt for full encryption
-            # For tmpfs backing, encryption provides defense against
-            # memory dump attacks even within the same container
-            logger.info(f"Workspace {workspace_id}: encrypted tmpfs {size_mb}MB at {mount_path}")
+        state = WorkspaceState.CREATED
+        is_root = _is_root()
 
-        # Mount tmpfs
-        try:
-            subprocess.run(
-                [
-                    "mount", "-t", "tmpfs", "-o",
-                    f"size={size_mb}M,mode=0700,uid={self.config.owner_uid},gid={self.config.owner_gid}",
-                    f"vibeshield-{workspace_id}",
-                    mount_path,
-                ],
-                capture_output=True,
-                timeout=10,
+        if is_root:
+            # tmpfs mount requires root
+            if encryption:
+                # Use dm-crypt for full encryption
+                # For tmpfs backing, encryption provides defense against
+                # memory dump attacks even within the same container
+                logger.info(f"Workspace {workspace_id}: encrypted tmpfs {size_mb}MB at {mount_path}")
+
+            try:
+                result = subprocess.run(
+                    [
+                        "mount", "-t", "tmpfs", "-o",
+                        f"size={size_mb}M,mode=0700,uid={self.config.owner_uid},gid={self.config.owner_gid}",
+                        f"vibeshield-{workspace_id}",
+                        mount_path,
+                    ],
+                    capture_output=True,
+                    timeout=10,
+                )
+                if result.returncode != 0:
+                    logger.warning(
+                        f"Workspace {workspace_id}: tmpfs mount failed (rc={result.returncode}): "
+                        f"{result.stderr.decode(errors='replace').strip()}"
+                    )
+                    state = WorkspaceState.CREATED
+                else:
+                    state = WorkspaceState.MOUNTED
+                    logger.info(f"Workspace {workspace_id}: tmpfs mounted at {mount_path}")
+            except subprocess.TimeoutExpired:
+                logger.warning(f"Workspace {workspace_id}: tmpfs mount timed out, using directory only")
+                state = WorkspaceState.CREATED
+        else:
+            logger.info(
+                f"Workspace {workspace_id}: running unprivileged (uid={os.geteuid()}), "
+                "using directory without tmpfs mount. Pass --tmpfs via container runtime flags."
             )
-            state = WorkspaceState.MOUNTED
-            logger.info(f"Workspace {workspace_id}: tmpfs mounted at {mount_path}")
-        except subprocess.TimeoutExpired:
-            state = WorkspaceState.CREATED
-            logger.warning(f"Workspace {workspace_id}: tmpfs mount timed out, using directory only")
 
         workspace = Workspace(
             workspace_id=workspace_id,
@@ -160,7 +194,9 @@ class WorkspaceManager:
         Securely wipe a workspace using multi-pass random overwrite.
 
         This is more secure than simply deleting files — it overwrites
-        the data with random bytes before unmounting.
+        the data with random bytes before unmounting. After unmounting
+        (or if mount failed), the directory is removed with shutil.rmtree
+        as a fallback.
         """
         workspace = self._workspaces.get(workspace_id)
         if not workspace:
@@ -176,20 +212,39 @@ class WorkspaceManager:
                 logger.debug(f"Workspace {workspace_id}: wipe pass {i+1}/{self.config.wipe_passes}")
 
             # Unmount tmpfs
-            try:
-                subprocess.run(
-                    ["umount", "-l", mount_path],  # Lazy unmount
-                    capture_output=True,
-                    timeout=10,
-                )
-            except Exception as e:
-                logger.error(f"Failed to unmount {mount_path}: {e}")
+            if _is_root():
+                try:
+                    result = subprocess.run(
+                        ["umount", "-l", mount_path],  # Lazy unmount
+                        capture_output=True,
+                        timeout=10,
+                    )
+                    if result.returncode != 0:
+                        logger.warning(
+                            f"Failed to unmount {mount_path} (rc={result.returncode}): "
+                            f"{result.stderr.decode(errors='replace').strip()}"
+                        )
+                    else:
+                        logger.debug(f"Workspace {workspace_id}: tmpfs unmounted")
+                except subprocess.TimeoutExpired:
+                    logger.warning(f"Workspace {workspace_id}: unmount timed out")
 
-            # Remove mount point
+        # Remove mount point — use rmtree for robustness
+        # (directory may have files if tmpfs mount failed)
+        try:
+            if os.path.ismount(mount_path):
+                # Directory is still a mount point — try lazy unmount first
+                if _is_root():
+                    subprocess.run(["umount", "-l", mount_path], capture_output=True, timeout=5)
+            shutil.rmtree(mount_path, ignore_errors=True)
+            # Remove parent if empty
+            parent = os.path.dirname(mount_path)
             try:
-                os.rmdir(mount_path)
+                os.rmdir(parent)  # Only succeeds if empty
             except OSError:
                 pass
+        except Exception as e:
+            logger.warning(f"Failed to remove {mount_path}: {e}")
 
         workspace.state = WorkspaceState.WIPED
         workspace.wiped_at = time.time()
