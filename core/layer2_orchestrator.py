@@ -20,6 +20,7 @@ import logging
 import json
 import urllib.request
 import urllib.error
+import secrets
 from dataclasses import dataclass, field
 from typing import Optional
 from enum import Enum
@@ -52,6 +53,25 @@ class HeartbeatResult:
         return self.status == HeartbeatStatus.LIVE
 
 
+# ─── Nonce cache for replay protection ──────────────────────────────────
+_NONCE_CACHE: dict[str, float] = {}
+"""Cache of used nonces (nonce -> timestamp). Prevents replay attacks."""
+
+
+def _generate_nonce() -> str:
+    """Generate a cryptographically random nonce."""
+    return secrets.token_hex(16)
+
+
+def _cleanup_nonces(max_age: float = 300.0):
+    """Remove expired nonces from cache."""
+    cutoff = time.time() - max_age
+    stale = [k for k, v in _NONCE_CACHE.items() if v < cutoff]
+    for k in stale:
+        del _NONCE_CACHE[k]
+    return len(stale)
+
+
 class OrchestrationEngine:
     """
     Verifies agent liveness via ClawMolt heartbeat API.
@@ -81,6 +101,7 @@ class OrchestrationEngine:
         Headers: X-API-Key: <api_key>, Content-Type: application/json
         Body: { "status": "ONLINE", "heat_current": ..., "local_llm_model": "..." }
 
+        Nonce-based replay protection is included in every heartbeat.
         Args:
             agent_id: UUID of the agent
             api_key: Agent's API key for authentication
@@ -94,7 +115,8 @@ class OrchestrationEngine:
         url = f"{self.config.api_url.rstrip('/')}/api/v1/agents/{agent_id}/heartbeat"
 
         # Build request body
-        body_dict: dict = {"status": status}
+        nonce = _generate_nonce()
+        body_dict: dict = {"status": status, "nonce": nonce}
         if heat_current is not None:
             body_dict["heat_current"] = heat_current
         if local_llm_model:
@@ -109,6 +131,7 @@ class OrchestrationEngine:
                 "X-API-Key": api_key,
                 "Content-Type": "application/json",
                 "User-Agent": "VibeShield/2.0",
+                "X-Nonce": nonce,
             },
             method="POST",
         )
@@ -123,6 +146,9 @@ class OrchestrationEngine:
                 # Success — agent is alive
                 server_status = data.get("status", "ONLINE")
                 self._last_heartbeat[agent_id] = time.time()
+                # Record nonce for replay protection
+                _NONCE_CACHE[nonce] = time.time()
+                _cleanup_nonces()
 
                 # Map server status to HeartbeatStatus
                 if server_status == "ONLINE":

@@ -120,6 +120,17 @@ BLOCKLIST_SYSCALLS = frozenset({
     # System configuration
     "syslog", "acct",
     "personality",
+    # io_uring — can bypass seccomp entirely
+    "io_uring_setup", "io_uring_enter", "io_uring_register",
+    # Landlock — filesystem sandbox escape
+    "landlock_create_ruleset", "landlock_add_rule", "landlock_restrict_self",
+    # Restart syscalls — potential for infinite-loop DoS
+    "restart_syscall",
+    # Miscellaneous dangerous
+    "nfsservctl",
+    "_sysctl",
+    "lookup_dcookie",
+    "vmsplice",
 })
 
 # Dangerous syscalls to KILL when hardening an existing allowlist profile.

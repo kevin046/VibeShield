@@ -1,0 +1,30 @@
+# VibeShield Sandbox Image for ClawMolt
+# Contains: claw (Rust CLI), Python 3.12, bash
+# Base: Ubuntu 24.04 minimal
+
+FROM docker.io/library/ubuntu:24.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    bash \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -sf /usr/bin/python3 /usr/bin/python
+
+# Create non-root user
+RUN useradd -m -s /bin/bash sandbox && \
+    mkdir -p /home/sandbox/.claw && \
+    chown -R sandbox:sandbox /home/sandbox
+
+# Copy claw binary
+COPY --chmod=755 claw /usr/local/bin/claw
+
+# Set working directory
+WORKDIR /home/sandbox
+
+# Run as non-root
+USER sandbox
+
+ENTRYPOINT ["claw"]

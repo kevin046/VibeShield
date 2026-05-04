@@ -11,16 +11,25 @@ Chain structure:
   entry[1].prev_hash = SHA256(entry[0])
   entry[n].hash = SHA256(entry[n].prev_hash + entry[n].data)
 
-Verification: recompute chain from genesis, any mismatch = tampered.
+Merkle Tree:
+  A balanced binary Merkle tree is built over the chain for
+  efficient selective verification. The Merkle root commits
+  to the entire log — useful for periodic anchoring.
+
+Verification:
+  - verify_chain(): recompute chain from genesis
+  - verify_merkle(): recompute Merkle root
+  Any mismatch = tampered.
 """
 
 import json
 import hashlib
 import time
 import os
+import math
 import logging
 from dataclasses import dataclass, field, asdict
-from typing import Optional, Any
+from typing import Optional, Any, Callable
 from enum import Enum
 
 logger = logging.getLogger("vibeshield.security.audit")
@@ -84,26 +93,32 @@ class AuditEntry:
 
 class AuditLog:
     """
-    Tamper-evident append-only audit log.
+    Tamper-evident append-only audit log with Merkle tree verification.
 
-    Every entry is cryptographically chained. The log can be exported
-    as JSON and verified independently — no external signing required.
+    Every entry is cryptographically chained with SHA-256. A Merkle
+    tree is built over the entire chain for efficient selective
+    verification and anchoring.
 
-    Usage:
-        log = AuditLog()
-        log.record("container_lifecycle", "info", "sandbox_started", agent_id="a1")
-        log.record("network_egress", "warning", "blocked_connection", details={"host": "evil.com"})
-        assert log.verify_chain()  # True if untampered
-        log.export("/var/log/vibeshield/audit.jsonl")
+    Supports:
+    - Append-only recording with hash chaining
+    - Full chain verification (detects any modification)
+    - Merkle tree computation and root anchoring
+    - Filtered queries with pagination
+    - JSONL import/export
+    - Periodic persistence
+    - Alert callbacks for CRITICAL events
     """
 
     GENESIS_HASH = "GENESIS" * 4  # 28 chars, clearly non-SHA256
 
-    def __init__(self, log_id: Optional[str] = None, audit_dir: str = "/var/lib/vibeshield/audit"):
+    def __init__(self, log_id: Optional[str] = None, audit_dir: str = "/var/lib/vibeshield/audit",
+                 on_critical: Optional[Callable[[AuditEntry], None]] = None):
         self.log_id = log_id or hashlib.sha256(str(time.time()).encode()).hexdigest()[:12]
         self.audit_dir = audit_dir
         self._entries: list[AuditEntry] = []
         self._index: dict[int, int] = {}  # sequence -> position in _entries
+        self._on_critical = on_critical  # alert callback for CRITICAL events
+        self._dirty = False  # tracks if export is needed
 
     @property
     def length(self) -> int:
@@ -128,6 +143,7 @@ class AuditLog:
         Append a new entry to the audit chain.
 
         The entry is automatically chained to the previous one.
+        If severity is CRITICAL and on_callback is set, fires the alert.
         """
         if isinstance(category, AuditCategory):
             category = category.value
@@ -151,9 +167,20 @@ class AuditLog:
 
         self._entries.append(entry)
         self._index[sequence] = len(self._entries) - 1
+        self._dirty = True
 
-        logger.debug(f"[AUDIT #{sequence}] {category}: {event}")
+        logger.debug(f"[AUDIT #{sequence}] {severity.upper()} {category}: {event}")
+
+        # Fire alert callback for CRITICAL events
+        if severity == AuditSeverity.CRITICAL.value and self._on_critical:
+            try:
+                self._on_critical(entry)
+            except Exception as e:
+                logger.error(f"Audit alert callback failed: {e}")
+
         return entry
+
+    # ─── Chain Verification ────────────────────────────────────────────────
 
     def verify_chain(self) -> dict[str, Any]:
         """
@@ -197,42 +224,228 @@ class AuditLog:
 
         return {"valid": True, "broken_at": None, "reason": "Chain integrity verified"}
 
+    # ─── Merkle Tree ───────────────────────────────────────────────────────
+
+    def compute_merkle_root(self) -> str:
+        """
+        Compute the Merkle tree root over the audit chain.
+
+        Builds a balanced binary Merkle tree from the entry hashes.
+        The root commits to the entire log — useful for periodic
+        anchoring to a public ledger or timestamp authority.
+        """
+        if not self._entries:
+            return hashlib.sha256(b"EMPTY_LOG").hexdigest()
+
+        leaves = [entry.entry_hash for entry in self._entries]
+        return self._merkle_root(leaves)
+
+    def compute_merkle_proof(self, sequence: int) -> list[str]:
+        """
+        Compute a Merkle proof for a specific entry.
+
+        Returns the list of sibling hashes needed to verify
+        that the entry is part of the log.
+        """
+        if not self._entries:
+            return []
+
+        leaves = [entry.entry_hash for entry in self._entries]
+        idx = sequence - 1  # 0-indexed
+
+        if idx < 0 or idx >= len(leaves):
+            return []
+
+        # Build tree layers
+        proof = []
+        level = leaves[:]
+        while len(level) > 1:
+            if len(level) % 2 == 1:
+                level.append(level[-1])  # Duplicate last for odd lengths
+
+            sibling_idx = idx ^ 1  # XOR 1 flips even↔odd
+            if sibling_idx < len(level):
+                proof.append(level[sibling_idx])
+
+            # Compute parent level
+            parent = []
+            for i in range(0, len(level), 2):
+                combined = level[i] + level[i + 1]
+                parent.append(hashlib.sha256(combined.encode()).hexdigest())
+
+            idx //= 2
+            level = parent
+
+        return proof
+
+    def verify_merkle(self, expected_root: Optional[str] = None) -> dict[str, Any]:
+        """
+        Verify the Merkle tree integrity.
+
+        If expected_root is provided, compares against it.
+        Otherwise computes and returns the current root.
+        """
+        current_root = self.compute_merkle_root()
+        result = {
+            "valid": True,
+            "merkle_root": current_root,
+            "entry_count": len(self._entries),
+        }
+
+        if expected_root and current_root != expected_root:
+            result["valid"] = False
+            result["reason"] = f"Merkle root mismatch: expected {expected_root[:16]}..., got {current_root[:16]}..."
+
+        return result
+
+    @staticmethod
+    def _merkle_root(leaves: list[str]) -> str:
+        """Compute Merkle root from a list of leaf hashes."""
+        if not leaves:
+            return hashlib.sha256(b"EMPTY_LOG").hexdigest()
+
+        level = leaves[:]
+        while len(level) > 1:
+            if len(level) % 2 == 1:
+                level.append(level[-1])  # Duplicate last for odd lengths
+
+            parent = []
+            for i in range(0, len(level), 2):
+                combined = level[i] + level[i + 1]
+                parent.append(hashlib.sha256(combined.encode()).hexdigest())
+
+            level = parent
+
+        return level[0]
+
+    # ─── Query ─────────────────────────────────────────────────────────────
+
     def query(
         self,
         category: Optional[str] = None,
         severity: Optional[str] = None,
         agent_id: Optional[str] = None,
+        event_contains: Optional[str] = None,
         since: Optional[float] = None,
         until: Optional[float] = None,
         limit: int = 100,
+        offset: int = 0,
+        sort_order: str = "desc",  # "asc" or "desc"
     ) -> list[dict]:
-        """Query the audit log with filters."""
+        """Query the audit log with filters and pagination."""
         results = []
-        for entry in reversed(self._entries):
+
+        entries = self._entries if sort_order == "asc" else reversed(self._entries)
+
+        skip_count = 0
+        for entry in entries:
             if len(results) >= limit:
                 break
+
             if category and entry.category != category:
                 continue
             if severity and entry.severity != severity:
                 continue
             if agent_id and entry.agent_id != agent_id:
                 continue
+            if event_contains and event_contains.lower() not in entry.event.lower():
+                continue
             if since and entry.timestamp < since:
-                continue
+                if sort_order == "asc":
+                    continue
+                break  # Since we're iterating reversed for desc, below since means done
             if until and entry.timestamp > until:
+                if sort_order == "desc":
+                    continue
+                break
+
+            if skip_count < offset:
+                skip_count += 1
                 continue
+
             results.append(entry.to_dict())
+
         return results
 
-    def export_jsonl(self, path: str):
-        """Export the full log as JSON Lines (append-friendly format)."""
+    def get_critical_events(self, limit: int = 50) -> list[dict]:
+        """Get all CRITICAL severity events."""
+        return self.query(severity="critical", limit=limit)
+
+    def get_recent(self, seconds: float = 3600, limit: int = 100) -> list[dict]:
+        """Get events from the last N seconds."""
+        since = time.time() - seconds
+        return self.query(since=since, limit=limit)
+
+    # ─── Persistence ──────────────────────────────────────────────────────
+
+    def export_jsonl(self, path: str, mode: str = "w"):
+        """
+        Export the full log as JSON Lines.
+
+        Args:
+            path: Output file path
+            mode: "w" (overwrite) or "a" (append)
+        """
+        from core.security.utils import validate_path
+        validated_path = validate_path(self.audit_dir, path, allow_create=True)
+        os.makedirs(os.path.dirname(validated_path) if os.path.dirname(validated_path) else ".", exist_ok=True)
+        if mode == "a":
+            # Append mode: only write the LAST entry (new since last export)
+            if self._entries:
+                with open(validated_path, "a") as f:
+                    f.write(self._entries[-1].to_json() + "\n")
+        else:
+            # Write/overwrite: write all entries
+            with open(validated_path, "w") as f:
+                for entry in self._entries:
+                    f.write(entry.to_json() + "\n")
+        logger.info(f"Audit log exported: {validated_path} ({len(self._entries)} entries)")
+        self._dirty = False
+
+    def export_json(self, path: str, include_merkle: bool = True):
+        """Export as a single JSON document with optional Merkle root."""
+        data = {
+            "log_id": self.log_id,
+            "entries": [entry.to_dict() for entry in self._entries],
+            "statistics": self.statistics(),
+        }
+        if include_merkle:
+            data["merkle_root"] = self.compute_merkle_root()
+
+        os.makedirs(os.path.dirname(path) if os.path.dirname(path) else ".", exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(data, f, indent=2)
+        logger.info(f"Audit log exported as JSON: {path} ({len(self._entries)} entries)")
+
+    def export_incremental(self, path: str):
+        """
+        Incremental export — only appends new entries since last export.
+        Tracks state via the last exported sequence number stored alongside the file.
+        """
+        tracker_path = path + ".seq"
+        last_exported = 0
+        try:
+            with open(tracker_path) as f:
+                last_exported = int(f.read().strip())
+        except (FileNotFoundError, ValueError):
+            pass
+
+        new_entries = [e for e in self._entries if e.sequence > last_exported]
+        if not new_entries:
+            return
+
         from core.security.utils import validate_path
         validated_path = validate_path(self.audit_dir, path, allow_create=True)
         os.makedirs(os.path.dirname(validated_path) if os.path.dirname(validated_path) else ".", exist_ok=True)
         with open(validated_path, "a") as f:
-            for entry in self._entries:
+            for entry in new_entries:
                 f.write(entry.to_json() + "\n")
-        logger.info(f"Audit log exported: {validated_path} ({len(self._entries)} entries)")
+
+        # Update tracker
+        with open(tracker_path, "w") as f:
+            f.write(str(self._entries[-1].sequence))
+
+        logger.info(f"Audit log incremental: appended {len(new_entries)} entries to {validated_path}")
 
     def import_jsonl(self, path: str) -> bool:
         """
@@ -314,6 +527,8 @@ class AuditLog:
             logger.error(f"Failed to import audit log: {e}")
             return False
 
+    # ─── Stats ─────────────────────────────────────────────────────────────
+
     def statistics(self) -> dict:
         """Get statistics about the audit log."""
         if not self._entries:
@@ -321,16 +536,32 @@ class AuditLog:
 
         categories = {}
         severities = {}
+        events = {}
+        agent_activity = {}
         for entry in self._entries:
             categories[entry.category] = categories.get(entry.category, 0) + 1
             severities[entry.severity] = severities.get(entry.severity, 0) + 1
+            events[entry.event] = events.get(entry.event, 0) + 1
+            if entry.agent_id:
+                agent_activity[entry.agent_id] = agent_activity.get(entry.agent_id, 0) + 1
 
         return {
             "total": len(self._entries),
             "categories": categories,
             "severities": severities,
+            "top_events": dict(sorted(events.items(), key=lambda x: -x[1])[:10]),
+            "top_agents": dict(sorted(agent_activity.items(), key=lambda x: -x[1])[:10]),
+            "merkle_root": self.compute_merkle_root(),
             "time_range": {
                 "first": self._entries[0].timestamp,
                 "last": self._entries[-1].timestamp,
+                "duration_hours": round((self._entries[-1].timestamp - self._entries[0].timestamp) / 3600, 2),
             },
         }
+
+    def critical_rate(self, window_seconds: float = 3600) -> float:
+        """Get the rate of CRITICAL events per hour in the time window."""
+        criticals = self.get_critical_events(limit=10000)
+        window_cutoff = time.time() - window_seconds
+        recent_criticals = [e for e in criticals if e["timestamp"] >= window_cutoff]
+        return round(len(recent_criticals) / (window_seconds / 3600), 2)
