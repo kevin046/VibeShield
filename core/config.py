@@ -21,13 +21,12 @@ class SandboxConfig:
 
 @dataclass
 class OrchestratorConfig:
-    """Layer 2 configuration for agent verification."""
-    ping_timeout_ms: int = int(os.getenv("VIBESHIELD_PING_TIMEOUT", "5000"))
-    echo_timeout_ms: int = int(os.getenv("VIBESHIELD_ECHO_TIMEOUT", "10000"))
+    """Layer 2 configuration for agent verification via ClawMolt heartbeat."""
+    api_url: str = os.getenv("CLAWMOLT_API_URL", "https://api.clawmolt.ai")
+    heartbeat_interval: int = int(os.getenv("CLAWMOLT_HEARTBEAT_INTERVAL", "600"))  # seconds (10 min)
+    heartbeat_timeout: int = int(os.getenv("CLAWMOLT_HEARTBEAT_TIMEOUT", "30"))  # seconds per request
+    offline_threshold: int = int(os.getenv("CLAWMOLT_OFFLINE_THRESHOLD", "1800"))  # seconds (30 min)
     max_workers: int = int(os.getenv("VIBESHIELD_MAX_AGENTS", "50"))
-    challenge_difficulty: str = os.getenv("VIBESHIELD_DIFFICULTY", "hard")
-    latency_threshold_fast: float = float(os.getenv("VIBESHIELD_LATENCY_FAST", "1.8"))
-    latency_threshold_slow: float = float(os.getenv("VIBESHIELD_LATENCY_SLOW", "5.0"))
 
 
 @dataclass

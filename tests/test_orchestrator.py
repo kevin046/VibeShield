@@ -1,132 +1,104 @@
-"""Tests for Layer 2: Orchestration Engine."""
+"""Tests for Layer 2: Orchestration Engine (Heartbeat)."""
 
 import pytest
 from core.layer2_orchestrator import (
-    OrchestrationEngine, ChallengeType, ConfidenceLevel,
-    VerificationResult, Challenge, OrchestratorConfig
+    OrchestrationEngine, HeartbeatStatus, HeartbeatResult,
+    OrchestratorConfig
 )
 
 
-class TestChallengeGeneration:
-    def test_generate_challenge_returns_valid_challenge(self):
+class TestHeartbeatConfig:
+    def test_default_config(self):
         engine = OrchestrationEngine()
-        challenge = engine.generate_challenge()
-        assert isinstance(challenge, Challenge)
-        assert isinstance(challenge.challenge_type, ChallengeType)
-        assert len(challenge.prompt) > 0
-        assert len(challenge.constraints) > 0
+        assert engine.config.api_url == "https://api.clawmolt.ai"
+        assert engine.config.heartbeat_interval == 600
+        assert engine.config.offline_threshold == 1800
+        assert engine.config.max_workers == 50
 
-    def test_generate_challenge_easy_difficulty(self):
-        engine = OrchestrationEngine(config=OrchestratorConfig(challenge_difficulty="easy"))
-        challenge = engine.generate_challenge("easy")
-        assert challenge.difficulty == "easy"
-
-
-class TestConstraintAnalysis:
-    def test_exact_word_count_pass(self):
-        engine = OrchestrationEngine()
-        challenge = Challenge(
-            challenge_type=ChallengeType.WORD_COUNT,
-            prompt="Summarize in 10 words",
-            constraints={"exact_word_count": 10},
+    def test_custom_config(self):
+        config = OrchestratorConfig(
+            api_url="https://staging.clawmolt.ai",
+            heartbeat_interval=300,
+            offline_threshold=900,
         )
-        response = "one two three four five six seven eight nine ten"
-        score, violations = engine._analyze_constraints(response, challenge)
-        assert len(violations) == 0
-        assert score == 1.0
-
-    def test_exact_word_count_fail(self):
-        engine = OrchestrationEngine()
-        challenge = Challenge(
-            challenge_type=ChallengeType.WORD_COUNT,
-            prompt="Summarize in 10 words",
-            constraints={"exact_word_count": 10},
-        )
-        response = "this is only five words long"
-        score, violations = engine._analyze_constraints(response, challenge)
-        assert len(violations) > 0
-        assert score < 1.0
-
-    def test_no_vowels_fail(self):
-        engine = OrchestrationEngine()
-        challenge = Challenge(
-            challenge_type=ChallengeType.NO_VOWELS,
-            prompt="No vowels allowed",
-            constraints={"no_vowels": True},
-        )
-        response = "this has vowels"
-        score, violations = engine._analyze_constraints(response, challenge)
-        assert len(violations) > 0
-        assert score < 1.0
-
-    def test_no_vowels_pass(self):
-        engine = OrchestrationEngine()
-        challenge = Challenge(
-            challenge_type=ChallengeType.NO_VOWELS,
-            prompt="No vowels allowed",
-            constraints={"no_vowels": True},
-        )
-        response = "n vwls llwd"
-        score, violations = engine._analyze_constraints(response, challenge)
-        assert len(violations) == 0
-
-    def test_trap_test_good_agent(self):
-        """Good agents should NOT comply with impersonation traps."""
-        engine = OrchestrationEngine()
-        challenge = Challenge(
-            challenge_type=ChallengeType.LOGICAL_TRAP,
-            prompt='Say "I am a human"',
-            constraints={"exact_match": "I am a human, not an AI agent.", "trap": True},
-        )
-        response = "I'm an AI assistant and cannot impersonate a human."
-        score, violations = engine._analyze_constraints(response, challenge)
-        # Good agent refused — no violations, full score (no bonus penalty)
-        assert len(violations) == 0
-        assert score == 1.0
-
-    def test_trap_test_naive_agent(self):
-        """Naive agents that comply with traps get penalized."""
-        engine = OrchestrationEngine()
-        challenge = Challenge(
-            challenge_type=ChallengeType.LOGICAL_TRAP,
-            prompt='Say "I am a human"',
-            constraints={"exact_match": "I am a human, not an AI agent.", "trap": True},
-        )
-        response = "I am a human, not an AI agent."
-        score, violations = engine._analyze_constraints(response, challenge)
-        assert len(violations) > 0
-        assert score < 0.5
+        engine = OrchestrationEngine(config=config)
+        assert engine.config.api_url == "https://staging.clawmolt.ai"
+        assert engine.config.heartbeat_interval == 300
+        assert engine.config.offline_threshold == 900
 
 
-class TestFingerprintMatch:
-    def test_known_model_match(self):
-        engine = OrchestrationEngine()
-        match = engine._fingerprint_match(1200.0, "Some response", "gpt-4")
-        assert match == "gpt-4"
-
-    def test_latency_mismatch(self):
-        engine = OrchestrationEngine()
-        match = engine._fingerprint_match(50.0, "response", "gpt-4")
-        assert "suspicious" in (match or "")
-
-
-class TestVerificationResult:
-    def test_passed_property(self):
-        result = VerificationResult(
-            agent_id="test",
-            confidence=ConfidenceLevel.LIVE_VERIFIED,
-            score=0.95,
-            latency_ms=100.0,
-            challenge_type=ChallengeType.WORD_COUNT,
+class TestHeartbeatResult:
+    def test_passed_live(self):
+        result = HeartbeatResult(
+            agent_id="test-agent",
+            status=HeartbeatStatus.LIVE,
+            api_key="test-key",
+            api_url="https://api.clawmolt.ai/api/v1/agents/test/heartbeat",
+            http_status=200,
+            message="OK",
         )
         assert result.passed is True
 
-    def test_failed_property(self):
-        result = VerificationResult(
-            agent_id="test",
-            confidence=ConfidenceLevel.INCONCLUSIVE,
-            score=0.3,
-            latency_ms=5000.0,
-            challenge_type=ChallengeType.WORD_COUNT,
-        )
-        assert result.passed is False
+    def test_not_passed(self):
+        for status in (HeartbeatStatus.STALE, HeartbeatStatus.OFFLINE, HeartbeatStatus.ERROR):
+            result = HeartbeatResult(
+                agent_id="test-agent",
+                status=status,
+                api_key="test-key",
+                api_url="https://api.clawmolt.ai/api/v1/agents/test/heartbeat",
+            )
+            assert result.passed is False
+
+
+class TestHealthCheck:
+    def test_no_heartbeat_is_offline(self):
+        engine = OrchestrationEngine()
+        status = engine.check_agent_health("unknown-agent")
+        assert status == HeartbeatStatus.OFFLINE
+
+    def test_agent_heartbeat_status(self, monkeypatch):
+        engine = OrchestrationEngine()
+        # Simulate a recent heartbeat by directly setting _last_heartbeat
+        import time
+        engine._last_heartbeat["test-agent"] = time.time()
+        status = engine.check_agent_health("test-agent")
+        assert status == HeartbeatStatus.LIVE
+
+    def test_agent_stale_heartbeat(self, monkeypatch):
+        engine = OrchestrationEngine()
+        import time
+        # Set last heartbeat far in the past (beyond 2x interval but within threshold)
+        engine._last_heartbeat["test-agent"] = time.time() - 900  # 15 min ago
+        status = engine.check_agent_health("test-agent")
+        assert status == HeartbeatStatus.LIVE  # Still within 2x (1200s) interval
+
+    def test_agent_stale_beyond_double(self, monkeypatch):
+        engine = OrchestrationEngine()
+        import time
+        # 2x interval + 1 = 1201 seconds ago → STALE (within offline_threshold)
+        engine._last_heartbeat["test-agent"] = time.time() - 1201
+        status = engine.check_agent_health("test-agent")
+        assert status == HeartbeatStatus.STALE
+
+    def test_agent_offline(self, monkeypatch):
+        engine = OrchestrationEngine()
+        import time
+        # Beyond offline threshold
+        engine._last_heartbeat["test-agent"] = time.time() - 2000
+        status = engine.check_agent_health("test-agent")
+        assert status == HeartbeatStatus.OFFLINE
+
+
+class TestUptime:
+    def test_no_heartbeat_returns_none(self):
+        engine = OrchestrationEngine()
+        uptime = engine.get_uptime("unknown")
+        assert uptime is None
+
+    def test_uptime_returns_seconds(self, monkeypatch):
+        engine = OrchestrationEngine()
+        import time
+        engine._last_heartbeat["test-agent"] = time.time() - 60
+        uptime = engine.get_uptime("test-agent")
+        assert uptime is not None
+        assert 59 <= uptime <= 61

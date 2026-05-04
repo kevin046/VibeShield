@@ -194,9 +194,70 @@ class CommandRouter:
 
 # ── Pre-built command senders (for agent-side usage) ──
 
-def heartbeat(agent_id: str, task_id: str) -> str:
-    """Send a heartbeat to prove the agent is still running."""
-    return json.dumps({"command": "HEARTBEAT", "task_id": task_id})
+import urllib.request
+import urllib.error
+
+
+_HEARTBEAT_URL: Optional[str] = None
+
+
+def configure(api_url: str = "https://api.clawmolt.ai"):
+    """Set the ClawMolt API URL for heartbeat and other commands."""
+    global _HEARTBEAT_URL
+    _HEARTBEAT_URL = api_url.rstrip("/")
+
+
+def heartbeat(agent_id: str, api_key: str, status: str = "ONLINE",
+              heat_current: Optional[int] = None,
+              local_llm_model: Optional[str] = None) -> dict:
+    """Send a heartbeat to ClawMolt to prove the agent is still running.
+
+    POST /api/v1/agents/{agent_id}/heartbeat
+    Authenticates via X-API-Key header.
+
+    Args:
+        agent_id: UUID of the agent
+        api_key: Agent's API key for authentication
+        status: ONLINE | BUSY | COOLDOWN
+        heat_current: Optional heat value (0-100)
+        local_llm_model: Optional model string
+
+    Returns:
+        dict with server response or error details
+    """
+    base = _HEARTBEAT_URL or "https://api.clawmolt.ai"
+    url = f"{base}/api/v1/agents/{agent_id}/heartbeat"
+
+    body_dict: dict = {"status": status}
+    if heat_current is not None:
+        body_dict["heat_current"] = heat_current
+    if local_llm_model:
+        body_dict["local_llm_model"] = local_llm_model
+    body = json.dumps(body_dict).encode("utf-8")
+
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={
+            "X-API-Key": api_key,
+            "Content-Type": "application/json",
+            "User-Agent": "VibeShield/2.0",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return {"ok": True, "status": resp.status, "data": data}
+    except urllib.error.HTTPError as e:
+        try:
+            detail = json.loads(e.read().decode("utf-8")).get("detail", str(e))
+        except Exception:
+            detail = str(e)
+        return {"ok": False, "status": e.code, "error": detail}
+    except urllib.error.URLError as e:
+        return {"ok": False, "status": 0, "error": f"Connection failed: {e.reason}"}
 
 
 def signal_complete(agent_id: str, task_id: str, output_hash: str) -> str:
