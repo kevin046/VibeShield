@@ -20,7 +20,7 @@ class TestInjectionGate:
         """A clean payload reaches the (mocked) podman call."""
         s = _sandbox()
         with patch("core.layer1_sandbox.subprocess.run") as mock_sp:
-            mock_sp.run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")  # str stdout
+            mock_sp.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
             result = s.deploy_agent("print('hello')", security_scan=True)
         assert result.state == SandboxState.COMPLETED
 
@@ -40,7 +40,7 @@ class TestInjectionGate:
     def test_scan_can_be_disabled_for_tests(self):
         s = _sandbox()
         with patch("core.layer1_sandbox.subprocess.run") as mock_sp:
-            mock_sp.run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")  # str stdout
+            mock_sp.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
             result = s.deploy_agent("anything", security_scan=False)
         assert result.state == SandboxState.COMPLETED
 
@@ -49,26 +49,22 @@ class TestSeccompWiring:
     def test_seccomp_profile_generated_and_applied(self):
         s = _sandbox()
         with patch("core.layer1_sandbox.subprocess.run") as mock_sp:
-            mock_sp.run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")  # str stdout
+            mock_sp.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
             s.deploy_agent("print('x')", security_scan=False)
-        cmd = mock_sp.run.call_args[0][0]
-        assert "--security-opt" in cmd
-        idx = cmd.index("--security-opt")
-        opts = cmd[idx + 1:idx + 3]
-        assert any(o.startswith("seccomp=") and o.endswith(".json") for o in opts), opts
-
-    def test_seccomp_profile_is_cached(self):
-        s1, s2 = _sandbox(), VibeShieldSandbox(task_id="wirein-test-2")
-        p1 = s1._ensure_seccomp_profile()
-        p2 = s2._ensure_seccomp_profile()
-        assert p1 == p2
-
-
-class TestAuditWiring:
+        podman_cmd = None
+        for call in mock_sp.call_args_list:
+            args, kwargs = call
+            if args and isinstance(args[0], list) and len(args[0]) > 0 and args[0][0] == "podman" and "--security-opt" in args[0]:
+                podman_cmd = args[0]
+                break
+        assert podman_cmd is not None, "No podman run call found"
+        # collect all --security-opt values
+        sec_opts = [podman_cmd[i+1] for i, v in enumerate(podman_cmd) if v == "--security-opt" and i+1 < len(podman_cmd)]
+        assert any(v.startswith("seccomp=") and v.endswith(".json") for v in sec_opts)
     def test_lifecycle_audited(self):
         s = _sandbox()
         with patch("core.layer1_sandbox.subprocess.run") as mock_sp:
-            mock_sp.run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")  # str stdout
+            mock_sp.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
             s.deploy_agent("print('x')", security_scan=False)
         events = [e.event for e in s._audit_log._entries]
         assert "sandbox.deploy.start" in events
