@@ -108,6 +108,7 @@ class VibeShieldSandbox:
         egress_rules: Optional[list[EgressRule]] = None,
         env_vars: Optional[dict[str, str]] = None,
         security_scan: bool = True,
+        api_token: Optional[str] = None,
     ) -> SandboxResult:
         """
         Launch a rootless container with restricted network egress.
@@ -150,6 +151,19 @@ class VibeShieldSandbox:
                 f"Blocked entrypoint: {entrypoint!r}. "
                 f"Allowed: {sorted(SAFE_ENTRYPOINTS)}"
             )
+
+        # --- API auth gate ---
+        expected_key = os.getenv("VIBESHIELD_API_KEY", "")
+        if expected_key and (not api_token or api_token != expected_key):
+            self._audit_log.record(
+                AuditCategory.SECURITY_VIOLATION,
+                AuditSeverity.CRITICAL,
+                "sandbox.auth_failure",
+                agent_id=self.task_id,
+                task_id=self.task_id,
+                details={"reason": "invalid_or_missing_api_token"},
+            )
+            raise PermissionError("Unauthorized: invalid or missing API token")
 
         self._audit_log.record(
             AuditCategory.CONTAINER_LIFECYCLE, AuditSeverity.INFO,
@@ -342,15 +356,33 @@ class VibeShieldSandbox:
         """
         # Replace --network=none with a restricted network
         cmd = [c for c in cmd if not c.startswith("--network")]
+        # Ensure restricted network exists (idempotent)
+        result = subprocess.run(
+            ["podman", "network", "inspect", "vibeshield-restricted"],
+            capture_output=True,
+            timeout=5,
+        )
+        if result.returncode != 0:
+            subprocess.run(
+                ["podman", "network", "create", "--driver", "bridge", "vibeshield-restricted"],
+                capture_output=True,
+                timeout=10,
+            )
         cmd.extend(["--network", "vibeshield-restricted"])
 
         for rule in rules:
-            # Log the rule for audit trail
             logger.info(
                 f"Egress rule: {rule.protocol}://{rule.host}:{rule.port} "
                 f"({rule.description})"
             )
-
+        self._audit_log.record(
+            AuditCategory.NETWORK,
+            AuditSeverity.INFO,
+            "sandbox.egress_rules_applied",
+            agent_id=self.config.agent_id,
+            task_id=self.task_id,
+            details={"network": "vibeshield-restricted", "rule_count": len(rules)},
+        )
         return cmd
 
     def _audit_network_activity(self) -> int:

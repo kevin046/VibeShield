@@ -83,3 +83,26 @@ class TestSeccompWiring:
         sev = [e.severity for e in s._audit_log._entries
                if e.event == "sandbox.injection_blocked"]
         assert sev == [AuditSeverity.CRITICAL.value]
+
+class TestApiAuth:
+    def test_missing_token_blocked_when_env_set(self):
+        import os
+        os.environ["VIBESHIELD_API_KEY"] = "secret123"
+        s = VibeShieldSandbox(task_id="auth-test")
+        with patch("core.layer1_sandbox.subprocess.run") as mock_sp:
+            mock_sp.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+            with pytest.raises(PermissionError):
+                s.deploy_agent("print('x')", security_scan=False)
+        # cleanup
+        del os.environ["VIBESHIELD_API_KEY"]
+
+    def test_valid_token_allows(self):
+        import os
+        os.environ["VIBESHIELD_API_KEY"] = "secret123"
+        s = VibeShieldSandbox(task_id="auth-test")
+        with patch("core.layer1_sandbox.subprocess.run") as mock_sp:
+            mock_sp.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
+            result = s.deploy_agent("print('x')", security_scan=False, api_token="secret123")
+        assert result.state == SandboxState.COMPLETED
+        del os.environ["VIBESHIELD_API_KEY"]
+
