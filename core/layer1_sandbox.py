@@ -52,6 +52,7 @@ SAFE_ENTRYPOINTS = frozenset({
 # Security: allowed task_id pattern
 SAFE_TASK_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
 
+# Class-level cache for the generated seccomp profile path (see _ensure_seccomp_profile)
 
 @dataclass
 class SandboxResult:
@@ -87,12 +88,17 @@ class VibeShieldSandbox:
     - Network-isolated: default-deny firewalling
     """
 
+    # Path of the generated seccomp profile shared across sandbox instances
+    _seccomp_path: Optional[str] = None
+
     def __init__(self, task_id: str, config: Optional[SandboxConfig] = None):
         self.task_id = task_id
         self.container_name = f"vs_task_{uuid.uuid4().hex[:8]}"
         self.config = config or SandboxConfig()
         self.state = SandboxState.PENDING
         self._start_time: Optional[float] = None
+        # Wired security modules (lazily created in deploy_agent)
+        self._audit_log = None
 
     def deploy_agent(
         self,
@@ -101,9 +107,17 @@ class VibeShieldSandbox:
         entrypoint_args: Optional[list[str]] = None,
         egress_rules: Optional[list[EgressRule]] = None,
         env_vars: Optional[dict[str, str]] = None,
+        security_scan: bool = True,
     ) -> SandboxResult:
         """
         Launch a rootless container with restricted network egress.
+
+        Security pipeline (wired 2026-09-29):
+          1. Audit-log the deployment (tamper-evident chain)
+          2. Prompt-injection scan of the payload (blocks HIGH/CRITICAL)
+          3. Seccomp profile applied via --security-opt seccomp=
+          4. Exfiltration scan of agent output (blocks HIGH/CRITICAL)
+          5. Every stage recorded to the audit log
 
         Args:
             encrypted_payload: Encrypted task data passed to the agent
@@ -111,10 +125,19 @@ class VibeShieldSandbox:
             entrypoint_args: Additional arguments to the entrypoint
             egress_rules: Optional list of allowed outbound connections
             env_vars: Environment variables to inject (no secrets!)
+            security_scan: Run injection/exfil scans (disable only for tests)
 
         Returns:
             SandboxResult with execution output and metadata
         """
+        from core.security.audit import AuditLog, AuditCategory, AuditSeverity
+        from core.security.injection import PromptInjectionDetector, ThreatLevel
+        from core.security.exfil import ExfiltrationDetector, ExfilRisk
+        from core.security.seccomp import SeccompProfile
+
+        if self._audit_log is None:
+            self._audit_log = AuditLog(log_id=f"sandbox-{self.task_id[:12]}")
+
         self._start_time = time.perf_counter()
 
         # Security: validate task_id (path traversal prevention)
@@ -128,6 +151,28 @@ class VibeShieldSandbox:
                 f"Allowed: {sorted(SAFE_ENTRYPOINTS)}"
             )
 
+        self._audit_log.record(
+            AuditCategory.CONTAINER_LIFECYCLE, AuditSeverity.INFO,
+            "sandbox.deploy.start",
+            agent_id=self.task_id, task_id=self.task_id,
+            details={"container": self.container_name, "entrypoint": entrypoint},
+        )
+
+        # ── Security gate 1: prompt-injection scan of the task payload ──
+        if security_scan:
+            injection = PromptInjectionDetector().scan(encrypted_payload, agent_id=self.task_id)
+            if injection.threat_level == ThreatLevel.MALICIOUS:
+                self._audit_log.record(
+                    AuditCategory.SECURITY_VIOLATION, AuditSeverity.CRITICAL,
+                    "sandbox.injection_blocked",
+                    agent_id=self.task_id, task_id=self.task_id,
+                    details={"score": injection.score, "matches": injection.matches[:5]},
+                )
+                raise ValueError(
+                    f"Payload blocked by prompt-injection scan "
+                    f"(level={injection.threat_level.value}, score={injection.score:.2f})"
+                )
+
         # Build the podman run command
         cmd = [
             "podman", "run",
@@ -136,6 +181,8 @@ class VibeShieldSandbox:
             "--network", self.config.network_mode,  # "none" = total isolation
             "--cap-drop", "ALL" if self.config.cap_drop_all else "",
             "--security-opt", "no-new-privileges=true",
+            # Seccomp: default-deny-ish hardened profile (generated, then applied)
+            "--security-opt", f"seccomp={self._ensure_seccomp_profile()}",
             "--memory", self.config.memory_limit,
             "--cpu-quota", str(self.config.cpu_quota),
             "--cpu-period", str(self.config.cpu_period),
@@ -188,6 +235,44 @@ class VibeShieldSandbox:
             # Count any network connections that may have occurred
             network_connections = self._audit_network_activity()
 
+            # ── Security gate 2: exfiltration scan of agent output ──
+            if security_scan and result.stdout:
+                exfil = ExfiltrationDetector().scan(
+                    result.stdout, agent_id=self.task_id, task_id=self.task_id,
+                )
+                if exfil.risk in (ExfilRisk.HIGH, ExfilRisk.CRITICAL):
+                    self._audit_log.record(
+                        AuditCategory.SECURITY_VIOLATION, AuditSeverity.CRITICAL,
+                        "sandbox.exfil_blocked",
+                        agent_id=self.task_id, task_id=self.task_id,
+                        details={"risk": exfil.risk.value, "score": exfil.score,
+                                 "findings": exfil.findings[:5]},
+                    )
+                    logger.error(
+                        "Task %s output blocked by exfil scan (risk=%s score=%.2f)",
+                        self.task_id, exfil.risk.value, exfil.score,
+                    )
+                    return SandboxResult(
+                        container_name=self.container_name,
+                        task_id=self.task_id,
+                        state=SandboxState.FAILED,
+                        exit_code=result.returncode,
+                        stdout="",
+                        stderr=f"Output blocked by exfiltration scan "
+                               f"(risk={exfil.risk.value}, score={exfil.score:.2f})",
+                        duration_seconds=round(duration, 3),
+                        network_connections=network_connections,
+                    )
+
+            self._audit_log.record(
+                AuditCategory.CONTAINER_LIFECYCLE,
+                AuditSeverity.INFO if self.state == SandboxState.COMPLETED else AuditSeverity.WARNING,
+                "sandbox.deploy.complete",
+                agent_id=self.task_id, task_id=self.task_id,
+                details={"exit_code": result.returncode,
+                         "duration_seconds": round(duration, 3)},
+            )
+
             return SandboxResult(
                 container_name=self.container_name,
                 task_id=self.task_id,
@@ -225,6 +310,29 @@ class VibeShieldSandbox:
                 stderr=str(e),
                 duration_seconds=round(time.perf_counter() - self._start_time, 3),
             )
+
+    def _ensure_seccomp_profile(self) -> str:
+        """Generate + save the hardened seccomp profile once; return its path.
+
+        The profile is Podman-compatible JSON applied via
+        --security-opt seccomp=<path>. Cached at class level so all sandboxes
+        share one profile file.
+        """
+        import tempfile
+
+        cls = type(self)
+        if cls._seccomp_path and os.path.exists(cls._seccomp_path):
+            return cls._seccomp_path
+
+        from core.security.seccomp import SeccompProfile
+
+        profile = SeccompProfile.from_podman_default()
+        path = os.path.join(tempfile.gettempdir(), f"vibeshield_seccomp_{os.getuid()}.json")
+        profile.save(path, base_dir=os.path.dirname(path))
+        cls._seccomp_path = path
+        logger.info("Seccomp profile ready: %s (%d syscalls)",
+                    path, profile.syscall_count)
+        return path
 
     def _apply_egress_rules(self, cmd: list[str], rules: list[EgressRule]) -> list[str]:
         """
