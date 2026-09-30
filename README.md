@@ -213,10 +213,16 @@ VibeShield is designed around **defense in depth** — multiple independent secu
 
 ### Egress Proxy & DNS Allowlisting
 - Default-deny: no outbound connection without explicit domain allowlisting
+- **Enforced restricted network** — every sandbox joins the dedicated `vibeshield-restricted` Podman bridge network (auto-created, idempotent); egress rules are applied and audit-logged (`sandbox.egress_rules_applied`) with rule count per deployment
 - Wildcard support (`*.googleapis.com`) for API domains
 - Per-agent rate limiting (requests/minute)
 - Request size limits to prevent data exfiltration via large payloads
 - Full connection audit trail (host, port, protocol, bytes, decision)
+
+### API Authentication
+- **Mandatory token gate** — deployments require a valid API token when `VIBESHIELD_API_KEY` is set; missing or invalid tokens raise `PermissionError` before the container starts
+- Auth failures logged as CRITICAL security violations (`sandbox.auth_failure`) in the tamper-evident chain
+- Constant-time token comparison (secrets-hardenened)
 
 ### Input Security
 - **Prompt injection detection** — scans all agent inputs before processing
