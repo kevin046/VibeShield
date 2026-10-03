@@ -258,3 +258,6 @@ class OpenShellSandbox:
             duration_s=time.perf_counter() - start,
             sandbox_name=self.sandbox_name,
         )
+
+    # Alias: uniform call surface with VibeShieldSandbox.deploy_agent()
+    deploy_agent = execute_task

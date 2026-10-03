@@ -111,3 +111,40 @@ class TestOpenShellLive(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBackendFactory(unittest.TestCase):
+    def test_default_is_podman(self):
+        import core.layer1_factory as f
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("VIBESHIELD_SANDBOX_BACKEND", None)
+            self.assertEqual(f.get_backend(), "podman")
+
+    def test_env_selects_openshell(self):
+        import core.layer1_factory as f
+        with mock.patch.dict(os.environ, {"VIBESHIELD_SANDBOX_BACKEND": "OpenShell"}):
+            self.assertEqual(f.get_backend(), "openshell")
+
+    def test_unknown_backend_rejected(self):
+        import core.layer1_factory as f
+        with mock.patch.dict(os.environ, {"VIBESHIELD_SANDBOX_BACKEND": "docker"}):
+            with self.assertRaises(ValueError):
+                f.get_backend()
+
+    def test_factory_returns_correct_class(self):
+        import core.layer1_factory as f
+        from core.layer1_sandbox import VibeShieldSandbox
+        from core.layer1_openshell import OpenShellSandbox
+        self.assertIsInstance(f.create_sandbox("fac-1", backend="podman"),
+                              VibeShieldSandbox)
+        self.assertIsInstance(f.create_sandbox("fac-2", backend="openshell"),
+                              OpenShellSandbox)
+
+    def test_factory_live_openshell_dispatch(self):
+        """Factory + OpenShell end-to-end through deploy_agent surface."""
+        import core.layer1_factory as f
+        sb = f.create_sandbox("fac-live-1", backend="openshell")
+        r = sb.deploy_agent('{"task": "factory-round-trip-7"}',
+                            entrypoint="python3", security_scan=True)
+        self.assertTrue(r.success, r.stderr[-300:])
+        self.assertIn("factory-round-trip-7", r.stdout)
