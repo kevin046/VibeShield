@@ -1,14 +1,16 @@
 # VibeShield Security Framework
 
 <p align="center">
-  <strong>Zero-Trust Podman Security for Autonomous AI Agent Workforces</strong>
+  <strong>Zero-Trust Sandboxing for Autonomous AI Agent Workforces</strong>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Podman-Rootless-blue?logo=podman" />
+  <img src="https://img.shields.io/badge/Backend-Podman_Rootless-blue?logo=podman" />
+  <img src="https://img.shields.io/badge/Backend-NVIDIA_OpenShell-76B900?logo=nvidia" />
   <img src="https://img.shields.io/badge/Layer-1_Sandbox-orange" />
   <img src="https://img.shields.io/badge/Layer-2_Orchestration-orange" />
   <img src="https://img.shields.io/badge/Layer-3_Escrow-orange" />
+  <img src="https://img.shields.io/badge/Tests-147_passed-brightgreen" />
   <img src="https://img.shields.io/badge/License-Apache_2.0-green" />
 </p>
 
@@ -22,7 +24,27 @@
 
 The VibeShield Security Framework provides the essential infrastructure for deploying autonomous AI agents in high-security enterprise environments. It enforces a **Zero-Trust** containerization model where agents run as unprivileged user processes, isolated by Linux namespaces and hardware-backed Trusted Execution Environments (TEE).
 
-Built on [Podman](https://podman.io/), VibeShield eliminates the daemon-based attack surface that plagues traditional container runtimes. Every agent executes in a rootless, ephemeral container with no persistent state — cryptographically shredded after each task.
+Built on [Podman](https://podman.io/) and [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell), VibeShield eliminates the daemon-based attack surface that plagues traditional container runtimes. Every agent executes in a rootless, ephemeral container with no persistent state — cryptographically shredded after each task.
+
+## Two Layer-1 Backends
+
+Layer 1 is pluggable. Both backends expose the same call surface (`deploy_agent()` → result with `success/exit_code/stdout/stderr/duration`) and run the identical security pipeline (API token gate → prompt-injection scan → sandbox → exfiltration scan).
+
+| | **Podman** (default) | **NVIDIA OpenShell** |
+|---|---|---|
+| Isolation | Rootless containers, seccomp, `--cap-drop=ALL` | Landlock filesystem sandbox (`hard_requirement`), unprivileged UID |
+| Network | `--network=none` + audited egress bridge | Default-deny per-binary/per-endpoint rules (kernel-enforced) |
+| Policy | Code flags | Declarative YAML (`policies/vibeshield-default.yaml`) |
+| Audit | Hash-chained JSONL | Hash chain + OCSF export, per-binary executable hashing |
+| Requirements | Podman 4.x+ | OpenShell gateway (Docker driver, kernel 5.19+) |
+
+Selection is a single env var (or `--backend` flag on the CLI runner):
+
+```bash
+VIBESHIELD_SANDBOX_BACKEND=openshell   # or 'podman' (default)
+```
+
+Fail-closed: an unknown backend value raises instead of falling back.
 
 ## The Three Layers
 
@@ -82,6 +104,42 @@ podman build -t vibeshield/base:latest -f Containerfile .
 python -m core.layer1_sandbox --task-id demo --payload "encrypted_task_data"
 ```
 
+### Run a Task via the CLI Runner (backend-agnostic)
+
+```bash
+# Podman (default)
+echo '{"task": "..."}' | python3 scripts/sandbox_task.py --task-id run-01
+
+# OpenShell backend (requires `openshell` gateway — see below)
+echo '{"task": "..."}' | python3 scripts/sandbox_task.py --task-id run-02 --backend openshell
+
+# Scoped egress + env vars, JSON result on stdout
+python3 scripts/sandbox_task.py --task-id run-03 --backend openshell \
+  --egress api.example.com:443 --egress cdn.example.com \
+  --env MODEL_NAME=claude --payload-file task.json
+```
+
+Exit codes: `0` success · `1` task failed in sandbox · `2` blocked (security gate / usage).
+
+### Enable the OpenShell Backend
+
+```bash
+# 1. Install NVIDIA OpenShell (user-level, mTLS gateway on 127.0.0.1:17670)
+curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh
+
+# 2. Build the task image (python3 + /workspace, unprivileged)
+docker build -f containerfiles/openshell-task.Containerfile -t vibeshield/task:24.04 .
+
+# 3. Flip the backend
+export VIBESHIELD_SANDBOX_BACKEND=openshell
+```
+
+The default policy (`policies/vibeshield-default.yaml`) enforces the same posture as the
+Podman path: Landlock `hard_requirement`, read-only system paths, writable only
+`/workspace` and `/tmp`, `/root` `/home` `/etc/shadow` denied, network default-deny.
+Egress rules passed to `deploy_agent()` are translated automatically into scoped
+per-binary network policies.
+
 ### Orchestrate with Podman Compose
 
 ```bash
@@ -108,13 +166,20 @@ systemctl --user enable --now vibeshield-orchestrator
 
 ### Layer 1 — Confidential Sandbox
 
-Every task executes inside a rootless Podman container:
+Every task executes inside a sandbox via one of two backends (see **Two Layer-1 Backends** above):
 
+**Podman path (default)** — rootless container per task:
 - **`--network=none`** by default — total network isolation
 - **`--cap-drop=ALL`** — all Linux capabilities removed
 - **`--security-opt=no-new-privileges`** — prevents privilege escalation
 - **`--tmpfs`** for workspace — no persistent disk writes
 - Cryptographic shredding of keys and volumes after task completion
+
+**OpenShell path** — NVIDIA gateway-managed sandbox:
+- **Landlock** filesystem sandbox, `hard_requirement` (deployment fails if the kernel can't enforce)
+- Declarative **YAML policy** — version-controlled filesystem/network rules
+- **Default-deny network** with per-binary, per-endpoint scoped egress (executable-hash pinned)
+- Per-sandbox mTLS, OCSF audit export, ephemeral by default (`--no-keep`)
 
 ### Layer 2 — Orchestration & Verification
 
@@ -148,6 +213,8 @@ VibeShield/
 ├── core/
 │   ├── __init__.py
 │   ├── layer1_sandbox.py        # Podman rootless isolation & TEE logic
+│   ├── layer1_openshell.py      # NVIDIA OpenShell backend (Landlock + YAML policy)
+│   ├── layer1_factory.py        # Backend selection (VIBESHIELD_SANDBOX_BACKEND)
 │   ├── layer2_orchestrator.py   # Behavioral verification (Ping & Echo)
 │   ├── layer3_escrow.py         # Economic settlement & Rs scoring
 │   ├── config.py                # Framework configuration
@@ -160,6 +227,10 @@ VibeShield/
 │       ├── exfil.py             # Output exfiltration detection
 │       ├── image_verify.py      # Container image integrity verification
 │       └── workspace.py         # Encrypted tmpfs workspace management
+├── policies/
+│   └── vibeshield-default.yaml  # OpenShell Layer-1 posture (Landlock, default-deny net)
+├── containerfiles/
+│   └── openshell-task.Containerfile  # OpenShell task image (python3 + /workspace)
 ├── api/
 │   ├── __init__.py
 │   └── commands.py              # Standardized agent command protocol
@@ -168,9 +239,11 @@ VibeShield/
 │   ├── test_sandbox.py
 │   ├── test_orchestrator.py
 │   ├── test_escrow.py
+│   ├── test_openshell.py        # OpenShell backend + factory + CLI runner (19 tests)
 │   └── test_security.py         # Security subsystem tests (59 tests)
 └── scripts/
     ├── install.sh               # Quick install script
+    ├── sandbox_task.py          # Backend-agnostic task runner CLI
     └── quadlet_setup.sh         # systemd quadlet generator
 ```
 
