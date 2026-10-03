@@ -261,3 +261,38 @@ class OpenShellSandbox:
 
     # Alias: uniform call surface with VibeShieldSandbox.deploy_agent()
     deploy_agent = execute_task
+
+    def deploy_agent_compat(self, *args, **kwargs) -> "SandboxResultLike":
+        """deploy_agent() returning the podman SandboxResult shape.
+
+        Bridges result fields so callers written against
+        core.layer1_sandbox.SandboxResult keep working:
+        container_name <- sandbox_name, state, duration_seconds.
+        """
+        r = self.execute_task(*args, **kwargs)
+        from dataclasses import dataclass, field as dc_field
+        from typing import Optional as Opt
+
+        @dataclass
+        class SandboxResultLike:
+            container_name: str
+            task_id: str
+            state: str  # "COMPLETED" | "FAILED" | "TIMEOUT"
+            exit_code: int
+            stdout: str
+            stderr: str
+            duration_seconds: float
+            memory_usage_mb: Opt[float] = None
+            network_connections: int = 0
+            success: bool = True
+
+        return SandboxResultLike(
+            container_name=r.sandbox_name,
+            task_id=r.task_id,
+            state="COMPLETED" if r.success else "FAILED",
+            exit_code=r.exit_code,
+            stdout=r.stdout,
+            stderr=r.stderr,
+            duration_seconds=r.duration_s,
+            success=r.success,
+        )
