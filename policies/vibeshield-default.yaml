@@ -1,0 +1,36 @@
+# VibeShield Layer-1 posture, expressed as an OpenShell sandbox policy.
+# Mirrors core/layer1_sandbox.py: default-deny network (air-gap equivalent of
+# --network=none), read-only system FS, ephemeral writable workspace, unprivileged
+# process identity. Unlisted paths are inaccessible by Landlock default-deny.
+version: 1
+
+filesystem_policy:
+  include_workdir: false
+  read_only:
+    - /usr
+    - /lib
+    - /bin
+    - /sbin
+    - /etc/alternatives
+    - /etc/ssl/certs          # TLS roots for scoped egress rules if ever added
+  read_write:
+    - /workspace               # ephemeral task workspace (shredded with sandbox)
+    - /tmp                     # scratch
+
+landlock:
+  compatibility: hard_requirement   # fail closed — VibeShield never degrades silently
+
+process:
+  run_as_user: "1000"
+  run_as_group: "1000"
+
+network_policies: {}
+  # Default-deny. Layer-1 tasks are air-gapped (--network=none equivalent).
+  # When a task needs egress, add a scoped rule, e.g.:
+  #
+  # pypi_readonly:
+  #   endpoints:
+  #     - host: pypi.org
+  #       port: 443
+  #   binaries:
+  #     - path: /usr/bin/python3.12
